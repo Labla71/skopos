@@ -1,0 +1,32 @@
+{
+  "_comment": "Example configuration with neutral values. The core rejects unknown checks and keys loudly.",
+  "interval_minutes": 5,
+  "retention_days": 30,
+  "timeout_seconds": 30,
+  "checks": [
+    { "check": "boot", "key": "boot" },
+    { "check": "memory", "key": "memory", "ram_warn_percent": 90, "ram_crit_percent": 95, "swap_warn_percent": 50, "swap_crit_percent": 80 },
+    { "check": "load", "key": "cpu", "warn_ratio": 1.5, "crit_ratio": 3 },
+    { "check": "disk", "key": "disk", "mounts": ["/", "/var"], "warn_percent": 85, "crit_percent": 95 },
+    { "check": "oom", "key": "oom", "severity": "crit" },
+    { "check": "journal", "key": "errors", "priority": "err", "exclude": ["^example noisy driver"], "severity": "warn" },
+    { "check": "failed-units", "key": "failed", "ignore": ["example-optional.service"] },
+    {
+      "check": "systemd",
+      "key": "services",
+      "restart_grace_seconds": 120,
+      "boot_grace_seconds": 600,
+      "units": [
+        { "unit": "example-app.service", "expected": "active", "severity": "crit" },
+        { "unit": "example-legacy.service", "expected": "inactive", "severity": "warn" }
+      ]
+    },
+    { "check": "sqlite-query", "key": "queue_length", "database": "/var/lib/example-app/app.db",
+      "query": "SELECT COUNT(*) FROM jobs WHERE state = 'pending'", "unit": "jobs", "warn_above": 100, "crit_above": 1000 },
+    { "check": "sqlite-query", "key": "errors_new", "database": "/var/lib/example-app/app.db",
+      "query": "SELECT SUM(errors) FROM daily_stats", "null_as": 0, "delta": true, "on_decrease": "rebase", "unit": "errors", "warn_above": 1, "crit_above": 20 },
+    { "check": "json-file", "key": "last_run", "file": "/var/lib/example-app/last-run.json", "field": "status", "expected": "ok",
+      "warn_age_seconds": 172800 },
+    { "check": "mount", "key": "mounts", "paths": ["/mnt/example"], "read_timeout_seconds": 5, "timeout_seconds": 15 }
+  ]
+}

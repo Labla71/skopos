@@ -1,0 +1,36 @@
+# Template: bin/install.sh replaces @NODE@ and installs it to /etc/systemd/system.
+[Unit]
+Description=Skopos monitor run (measure once, store locally)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=skopos
+Group=skopos
+ExecStart=@NODE@ --disable-warning=ExperimentalWarning /opt/skopos/bin/skopos.js run
+UMask=0022
+# A run takes seconds; the per-check timeouts end hanging checks well before this.
+TimeoutStartSec=10min
+Nice=10
+IOSchedulingClass=idle
+
+# Read only, never intervene: enforced by the kernel, not by the code.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/skopos
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+PrivateDevices=yes
+
+# Pull, not push: the run has no network at all. systemctl and journalctl still work, they use
+# Unix sockets and files in the file system, which a private network namespace does not hide.
+PrivateNetwork=yes
+
+# Spare the host: a faulty check must not squeeze the services Skopos is watching. A normal
+# run peaks at about 55 MB; hitting the limit kills the run, which then shows up as a missing
+# heartbeat and as an OOM kill in the next run.
+MemoryMax=200M
+CPUQuota=50%

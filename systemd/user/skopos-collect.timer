@@ -1,0 +1,11 @@
+# Two minutes after the measuring runs (*:0/5), so every poll finds a finished run.
+[Unit]
+Description=Skopos collector, every 5 minutes
+
+[Timer]
+OnCalendar=*:2/5
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

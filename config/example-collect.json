@@ -1,0 +1,26 @@
+{
+  "_comment": "Example collector configuration with neutral values (skopos collect). Only the collecting host needs it; see doc/sammler.md. Event counters (oom, journal, sqlite-query with delta) report an occurrence in one run only and confirm after one run.",
+  "hosts": [
+    { "name": "example-host", "ssh": "example-host" },
+    { "name": "example-db", "ssh": "monitor@example-db" },
+    { "name": "self", "local": true }
+  ],
+  "state_file": "/var/lib/skopos-collect/state.json",
+  "notifier": {
+    "type": "command",
+    "command": ["/usr/local/bin/example-notify", "--channel", "ops"],
+    "timeout_seconds": 30
+  },
+  "confirm_runs": 2,
+  "recover_runs": 2,
+  "flap_changes": 4,
+  "flap_window_minutes": 60,
+  "max_notifications_per_hour": 5,
+  "overrides": {
+    "systemd": { "crit_confirm_runs": 1 },
+    "failed-units": { "crit_confirm_runs": 1 },
+    "oom": { "confirm_runs": 1 },
+    "journal": { "confirm_runs": 1 },
+    "sqlite-query/new_errors": { "confirm_runs": 1 }
+  }
+}

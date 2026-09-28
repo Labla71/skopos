@@ -1,0 +1,10 @@
+# User unit for the collector on the one host that polls the others (see doc/sammler.md).
+# It runs as the user whose SSH keys reach the hosts; the measuring service stays untouched.
+[Unit]
+Description=Skopos collector: poll reports, notify confirmed state changes
+
+[Service]
+Type=oneshot
+ExecStart=/opt/skopos/bin/skopos.js collect --config %h/.config/skopos/collect.json
+NoNewPrivileges=yes
+TimeoutStartSec=4min

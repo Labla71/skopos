@@ -1,0 +1,14 @@
+{
+  "name": "skopos",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Lean, generic monitor: measures, stores, never intervenes.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  }
+}

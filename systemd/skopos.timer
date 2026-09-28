@@ -1,0 +1,11 @@
+# Template: bin/install.sh replaces @SCHEDULE@ with the interval from the configuration.
+[Unit]
+Description=Skopos monitor run, periodically
+
+[Timer]
+@SCHEDULE@
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
