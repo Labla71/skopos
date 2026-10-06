@@ -21,7 +21,7 @@ const host2 = { ...host, name: 'example-host-2', ssh: 'example-host-2' };
 const baseCfg = (extra = {}) => ({ ...COLLECT_DEFAULTS, overrides: {}, hosts: [host], ...extra });
 
 // ---- Report sequences as fixtures: one Skopos run per entry, `rows` = { key: status | { check, status } }
-function report({ runs = [], stale = false, now = runs.at(-1)?.min ?? 0 }) {
+function report({ runs = [], stale = false, now = runs.at(-1)?.min ?? 0, catalog = [] }) {
   const history = runs.flatMap(({ min, rows }) => Object.entries(rows).map(([key, s]) => {
     const status = typeof s === 'object' ? s.status : s;
     return {
@@ -34,7 +34,7 @@ function report({ runs = [], stale = false, now = runs.at(-1)?.min ?? 0 }) {
   return {
     report_version: 1, generated_at: iso(now), since: iso(now - 30),
     heartbeat: { run_id: 1, started_at: iso(last), finished_at: new Date(T0 + last * 60_000 + 200).toISOString(), duration_ms: 200, age_seconds: (now - last) * 60, interval_minutes: 5, stale, counts: {}, version: 'x', runs_in_window: runs.length },
-    checks: [], history,
+    checks: catalog.map(([check, key]) => ({ check, key, status: 'ok', reason: null, value: 1, unit: '%', time: new Date(T0 + last * 60_000 + 50).toISOString() })), history,
   };
 }
 const res = (r) => ({ code: 0, stdout: JSON.stringify(r), stderr: '' });
@@ -50,6 +50,61 @@ function memStore() { let s = null; return { load: async () => (s ? JSON.parse(s
 const env = (cfg = baseCfg()) => ({ cfg, notifier: fakeNotifier(), store: memStore() });
 const poll = (e, min, answers) => collectOnce({ cfg: e.cfg, store: e.store, notifier: e.notifier, now: at(min), exec: async (h) => answers[h.name] });
 const types = (e) => e.notifier.events.map((ev) => `${ev.type}:${ev.host}:${ev.kind === 'host' ? ev.code : ev.key}`);
+
+// ---- retirement of checks removed from the configuration
+
+const stateOf = async (e) => e.store.load();
+const confirmedKeys = (st) => Object.values(st.entities).filter((x) => x.confirmed).map((x) => x.key);
+
+test('a confirmed check missing from the latest run is retired with a "removed" recovery', async () => {
+  const e = env();
+  await poll(e, 6, { 'example-host': res(report({ runs: [bad(0, 'sol.a'), bad(5, 'sol.a')], catalog: [['memory', 'sol.a']] })) });
+  assert.deepEqual(types(e), ['problem:example-host:sol.a']);
+  const r = await poll(e, 11, { 'example-host': res(report({ runs: [ok(11, 'other.x')], now: 11, catalog: [['memory', 'other.x']] })) });
+  assert.deepEqual(types(e), ['problem:example-host:sol.a', 'recovery:example-host:sol.a']);
+  const ev = e.notifier.events.at(-1);
+  assert.equal(ev.removed, true);
+  assert.match(ev.summary, /removed from the configuration/);
+  assert.equal(r.problems, 0);
+  assert.deepEqual(confirmedKeys(await stateOf(e)), []);
+  await poll(e, 16, { 'example-host': res(report({ runs: [ok(16, 'other.x')], now: 16, catalog: [['memory', 'other.x']] })) });
+  assert.deepEqual(Object.keys((await stateOf(e)).entities).filter((k) => k.includes('sol')), []); // gone after delivery
+  assert.equal(e.notifier.events.length, 2);
+});
+
+test('an unconfirmed entity of a removed check is dropped without an event', async () => {
+  const e = env();
+  await poll(e, 1, { 'example-host': res(report({ runs: [bad(0, 'sol.a')], catalog: [['memory', 'sol.a']] })) });
+  await poll(e, 6, { 'example-host': res(report({ runs: [ok(6, 'other.x')], now: 6, catalog: [['memory', 'other.x']] })) });
+  assert.equal(e.notifier.events.length, 0);
+  assert.deepEqual(Object.keys((await stateOf(e)).entities).filter((k) => k.includes('sol')), []);
+});
+
+test('no retirement without a trustworthy catalog: unreachable, stale, empty, or the instance still reports', async () => {
+  const e = env();
+  await poll(e, 6, { 'example-host': res(report({ runs: [bad(0, 'sol.a'), bad(5, 'sol.a')], catalog: [['memory', 'sol.a']] })) });
+  await poll(e, 11, { 'example-host': unreachable });
+  await poll(e, 16, { 'example-host': res({ ...report({ runs: [ok(16, 'other.x')], now: 16, stale: true, catalog: [['memory', 'other.x']] }) }) });
+  await poll(e, 21, { 'example-host': res(report({ runs: [ok(20, 'other.x')], now: 21, catalog: [] })) }); // empty catalog
+  // the check itself fails: only the instance row (unknown) is left, the instance is still configured
+  await poll(e, 26, { 'example-host': res(report({ runs: [ok(25, 'other.x')], now: 26, catalog: [['memory', 'sol']] })) });
+  const st = await stateOf(e);
+  assert.deepEqual(confirmedKeys(st), ['sol.a']);
+  assert.equal(Object.values(st.entities).some((x) => x.retired), false);
+  assert.ok(!e.notifier.events.some((ev) => ev.removed));
+});
+
+test('a retired check that comes back is a normal entity again', async () => {
+  const e = env();
+  await poll(e, 6, { 'example-host': res(report({ runs: [bad(0, 'sol.a'), bad(5, 'sol.a')], catalog: [['memory', 'sol.a']] })) });
+  e.notifier.fail = true; // recovery stays pending, the entity stays
+  await poll(e, 11, { 'example-host': res(report({ runs: [ok(11, 'other.x')], now: 11, catalog: [['memory', 'other.x']] })) });
+  e.notifier.fail = false;
+  await poll(e, 16, { 'example-host': res(report({ runs: [bad(15, 'sol.a'), bad(16, 'sol.a')], now: 16, catalog: [['memory', 'sol.a']] })) });
+  const st = await stateOf(e);
+  assert.deepEqual(confirmedKeys(st), ['sol.a']);
+  assert.equal(Object.values(st.entities).some((x) => x.retired), false);
+});
 
 // ---- soft/hard state
 
