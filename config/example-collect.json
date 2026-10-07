@@ -1,5 +1,5 @@
 {
-  "_comment": "Example collector configuration with neutral values (skopos collect). Only the collecting host needs it; see doc/sammler.md. Event counters (oom, journal, sqlite-query with delta) report an occurrence in one run only and confirm after one run.",
+  "_comment": "Example collector configuration with neutral values (skopos collect). Only the collecting host needs it; see doc/collector.md. Event counters (oom, journal, sqlite-query with delta) report an occurrence in one run only and confirm after one run.",
   "hosts": [
     { "name": "example-host", "ssh": "example-host" },
     { "name": "example-db", "ssh": "monitor@example-db" },

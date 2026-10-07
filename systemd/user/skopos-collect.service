@@ -1,4 +1,4 @@
-# User unit for the collector on the one host that polls the others (see doc/sammler.md).
+# User unit for the collector on the one host that polls the others (see doc/collector.md).
 # It runs as the user whose SSH keys reach the hosts; the measuring service stays untouched.
 [Unit]
 Description=Skopos collector: poll reports, notify confirmed state changes
