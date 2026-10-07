@@ -96,13 +96,15 @@ Entitäten, jeweils je Host:
 - **Drosselung:** Mehr als `max_notifications_per_hour` Ereignisse `problem`/`unstable` je
   Stunde gehen als `throttled` hinaus, mit dem unterdrückten Ereignis in `suppressed`.
 - **Ausmusterung:** Der letzte Lauf eines vollständigen Reports mit frischem Heartbeat ist
-  der Katalog dessen, was auf dem Host konfiguriert ist. Eine Entität eines Checks, dessen
-  Instanz (der Schlüssel bis zum ersten `.`) dort keine Zeile mehr hat, wurde aus der
-  Konfiguration entfernt. Eine bestätigte endet mit einem `recovery`-Ereignis mit
-  `removed: true` (ein dafür geöffnetes Ticket darf nicht hängen bleiben); eine
-  unbestätigte wird still verworfen. Bei fehlgeschlagenem Abruf, veraltetem Heartbeat oder
-  leerem Katalog wird nichts ausgemustert, und auch nicht, solange die Instanz noch
-  berichtet, selbst nur als `unknown`: „Unbekannt“ ist nicht „ok“. Nur der Zustand des
+  der Katalog dessen, was auf dem Host konfiguriert ist. Eine Entität, deren Schlüssel dort
+  keine Zeile mehr hat, wurde aus der Konfiguration entfernt: ein ganzer Check oder ein
+  einzelner Eintrag eines Checks mit mehreren (eine Unit, ein Mount). Eine bestätigte endet
+  mit einem `recovery`-Ereignis mit `removed: true` (ein dafür geöffnetes Ticket darf
+  nicht hängen bleiben); eine unbestätigte wird still verworfen. Bei fehlgeschlagenem
+  Abruf, veraltetem Heartbeat oder leerem Katalog wird nichts ausgemustert, und auch nicht,
+  solange der Check als Ganzes fehlschlug (er meldet dann eine Zeile unter dem
+  Instanz-Schlüssel, dem Schlüssel bis zum ersten `.`, oder `<key>.?`): „Unbekannt“ ist
+  nicht „ok“. Nur der Zustand des
   Sammlers ändert sich, nie Datenbank oder Konfiguration des Hosts. Kommt ein Check
   zurück, ist er wieder eine normale Entität.
 - **Zustellung:** Scheitert der Notifier, bleiben das Ereignis und alle späteren derselben

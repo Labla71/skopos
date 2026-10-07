@@ -97,12 +97,13 @@ Entities, each per host:
 - **Throttling:** more than `max_notifications_per_hour` `problem`/`unstable` events
   per hour go out as `throttled`, with the suppressed event in `suppressed`.
 - **Retirement:** the latest run of a complete report with a fresh heartbeat is the catalog
-  of what is configured on the host. An entity of a check whose instance (the key before
-  the first `.`) has no row in it any more was removed from the configuration. A confirmed
-  one ends with a `recovery` event carrying `removed: true` (a ticket opened for it must
-  not hang); an unconfirmed one is dropped silently. Nothing is retired on a failed fetch,
-  a stale heartbeat or an empty catalog, and not while the instance still reports, even
-  only as `unknown`: "unknown" is not "ok". Only the collector's state changes, never the
+  of what is configured on the host. An entity whose key has no row in it any more was
+  removed from the configuration: a whole check, or a single item of a check with several
+  (one unit, one mount). A confirmed one ends with a `recovery` event carrying
+  `removed: true` (a ticket opened for it must not hang); an unconfirmed one is dropped
+  silently. Nothing is retired on a failed fetch, a stale heartbeat or an empty catalog,
+  and not while the check failed as a whole (it then reports one row under its bare
+  instance key, the key before the first `.`, or `<key>.?`): "unknown" is not "ok". Only the collector's state changes, never the
   host's database or configuration. A check that comes back is a normal entity again.
 - **Delivery:** if the notifier fails, the event and all later ones of the same entity
   stay pending for the next run; the order per entity is preserved.

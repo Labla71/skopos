@@ -94,6 +94,30 @@ test('no retirement without a trustworthy catalog: unreachable, stale, empty, or
   assert.ok(!e.notifier.events.some((ev) => ev.removed));
 });
 
+test('a single item removed from a check that still reports its other items is retired', async () => {
+  const e = env();
+  const rows = (min, a, b) => ({ min, rows: { 'svc.a': { check: 'systemd', status: a }, 'svc.b': { check: 'systemd', status: b } } });
+  await poll(e, 6, { 'example-host': res(report({ runs: [rows(0, 'crit', 'ok'), rows(5, 'crit', 'ok')], catalog: [['systemd', 'svc.a'], ['systemd', 'svc.b']] })) });
+  assert.deepEqual(types(e), ['problem:example-host:svc.a']);
+  const r = await poll(e, 11, { 'example-host': res(report({ runs: [{ min: 11, rows: { 'svc.b': { check: 'systemd', status: 'ok' } } }], now: 11, catalog: [['systemd', 'svc.b']] })) });
+  assert.deepEqual(types(e), ['problem:example-host:svc.a', 'recovery:example-host:svc.a']);
+  assert.equal(e.notifier.events.at(-1).removed, true);
+  assert.equal(r.problems, 0);
+  const st = await stateOf(e);
+  assert.ok(Object.values(st.entities).some((x) => x.key === 'svc.b'), 'the sibling item stays');
+});
+
+test('an item of a check that failed as a whole is not retired (bare instance row, or invalid sub-key)', async () => {
+  for (const bareKey of ['svc', 'svc.?']) {
+    const e = env();
+    await poll(e, 6, { 'example-host': res(report({ runs: [{ min: 0, rows: { 'svc.a': { check: 'systemd', status: 'crit' } } }, { min: 5, rows: { 'svc.a': { check: 'systemd', status: 'crit' } } }], catalog: [['systemd', 'svc.a']] })) });
+    await poll(e, 11, { 'example-host': res(report({ runs: [ok(11, 'other.x')], now: 11, catalog: [['systemd', bareKey]] })) });
+    const st = await stateOf(e);
+    assert.deepEqual(confirmedKeys(st), ['svc.a'], bareKey);
+    assert.ok(!e.notifier.events.some((ev) => ev.removed), bareKey);
+  }
+});
+
 test('a retired check that comes back is a normal entity again', async () => {
   const e = env();
   await poll(e, 6, { 'example-host': res(report({ runs: [bad(0, 'sol.a'), bad(5, 'sol.a')], catalog: [['memory', 'sol.a']] })) });
