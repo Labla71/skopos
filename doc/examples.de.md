@@ -104,6 +104,40 @@ zählt rechnerweit alle Units im Zustand `failed`, unabhängig davon, ob sie in 
 Liste stehen — nützlich für Timer-Jobs, die man nicht einzeln aufführen will. Details:
 [checks.de.md](checks.de.md#systemd), [checks.de.md](checks.de.md#failed-units).
 
+### Beispiel: SSH-Zugang
+
+```json
+{
+  "check": "systemd",
+  "key": "services",
+  "boot_grace_seconds": 600,
+  "units": [
+    { "unit": "ssh.socket", "expected": "active", "severity": "crit" }
+  ]
+}
+```
+
+Welche Unit einzutragen ist, hängt von der Distribution ab. Vor dem Eintrag nachsehen:
+
+```bash
+systemctl is-enabled ssh.socket ssh.service sshd.service
+```
+
+- **`ssh.socket` ist aktiviert** (aktuelle Ubuntu-Versionen): systemd lauscht auf dem Port
+  und startet `ssh.service` bei der ersten Verbindung. Überwacht wird `ssh.socket`. Nach
+  einem Neustart bleibt `ssh.service` `inactive`, bis sich jemand verbindet; ein Eintrag
+  dafür würde einen Befund melden, obwohl SSH funktioniert.
+- **Keine Socket-Unit:** den Dienst selbst überwachen, `ssh.service` unter Debian und Ubuntu,
+  `sshd.service` bei den meisten anderen Distributionen.
+
+Eine Unit, die es auf dem Host nicht gibt, erscheint als `unknown` (`unit not found`) und
+nicht als gestoppt; ein falscher Name bleibt also nicht unbemerkt.
+
+Eine Grenze, wenn ein Sammler die Reports per SSH abholt: Solange SSH ausgefallen ist,
+bekommt der Sammler den Report nicht und meldet stattdessen den Host als nicht erreichbar.
+Der Befund dieses Checks kommt mit der Historie an, sobald SSH wieder läuft. Auf dem
+Sammler-Host selbst, der lokal gelesen wird, kommt er sofort an.
+
 ## Fehlermeldungen im Journal
 
 ```json

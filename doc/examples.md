@@ -104,6 +104,40 @@ after a reboot, `restart_grace_seconds` a controlled `systemctl restart`.
 whether they are in the `systemd` list — useful for timer jobs you don't want to list
 individually. Details: [checks.md](checks.md#systemd), [checks.md](checks.md#failed-units).
 
+### Example: SSH access
+
+```json
+{
+  "check": "systemd",
+  "key": "services",
+  "boot_grace_seconds": 600,
+  "units": [
+    { "unit": "ssh.socket", "expected": "active", "severity": "crit" }
+  ]
+}
+```
+
+Which unit to name depends on the distribution, so look before writing the entry:
+
+```bash
+systemctl is-enabled ssh.socket ssh.service sshd.service
+```
+
+- **`ssh.socket` is enabled** (recent Ubuntu releases): systemd listens on the port and
+  starts `ssh.service` on the first connection. Monitor `ssh.socket`. After a reboot
+  `ssh.service` stays `inactive` until someone connects, so an entry for it would report a
+  finding although SSH works.
+- **No socket unit:** monitor the service itself, `ssh.service` on Debian and Ubuntu,
+  `sshd.service` on most other distributions.
+
+A unit that does not exist on the host shows up as `unknown` (`unit not found`), not as
+stopped, so a wrong name does not go unnoticed.
+
+One limit when a collector pulls the reports over SSH: while SSH is down, the collector
+cannot fetch the report and reports the host as unreachable instead. This check's own
+finding arrives with the history once SSH works again. On the collector host itself, which
+is read locally, it arrives right away.
+
 ## Errors in the journal
 
 ```json
