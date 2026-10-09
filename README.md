@@ -41,7 +41,7 @@ Try it locally (no install, no `npm ci`):
 
 ```bash
 bin/skopos.js run --config config/example.json --db /tmp/skopos.db
-bin/skopos.js report --json --db /tmp/skopos.db
+bin/skopos.js report --db /tmp/skopos.db      # readable table; add --json for the machine format
 ```
 
 Install on the target host (a plain copy of files, a system user and a systemd timer;

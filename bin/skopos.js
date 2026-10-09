@@ -1,5 +1,5 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
-// Skopos: `skopos run` measures once, `skopos report --json` prints heartbeat, status and history,
+// Skopos: `skopos run` measures once, `skopos report [--json]` prints heartbeat, status and history,
 // `skopos collect` polls the reports of other hosts and notifies confirmed state changes.
 import { parseArgs } from 'node:util';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
@@ -7,6 +7,7 @@ import { dirname } from 'node:path';
 import { ConfigError, DEFAULT_CONFIG_PATH, loadConfig } from '../lib/config.js';
 import { runOnce } from '../lib/run.js';
 import { buildReport } from '../lib/report.js';
+import { formatReport } from '../lib/report-text.js';
 import { DEFAULT_DB_PATH, openStore, openStoreReadOnly } from '../lib/store.js';
 import { loadCollectConfig } from '../lib/collect/config.js';
 import { createNotifier } from '../lib/collect/notify.js';
@@ -16,7 +17,7 @@ import { DEFAULT_MARKER_PATH } from '../lib/checks/boot.js';
 
 const HELP = `Usage:
   skopos run    [--config <file>] [--db <file>]
-  skopos report --json [--since <ISO timestamp>] [--db <file>]
+  skopos report [--json] [--since <ISO timestamp>] [--db <file>]
   skopos collect --config <file>
   skopos expect-reboot [--reason <text>] [--marker <file>]
 Defaults: --config ${DEFAULT_CONFIG_PATH}, --db ${DEFAULT_DB_PATH} (also via SKOPOS_DB).
@@ -69,7 +70,7 @@ try {
     } finally {
       store.close();
     }
-  } else if (command === 'report' && positionals.length === 1 && values.json) {
+  } else if (command === 'report' && positionals.length === 1) {
     let since;
     if (values.since !== undefined) {
       const t = Date.parse(values.since);
@@ -78,7 +79,8 @@ try {
     }
     const store = openStoreReadOnly(dbPath);
     try {
-      await writeOut(`${JSON.stringify(buildReport(store, { since }), null, 2)}\n`);
+      const report = buildReport(store, { since });
+      await writeOut(`${values.json ? JSON.stringify(report, null, 2) : formatReport(report)}\n`);
     } finally {
       store.close();
     }

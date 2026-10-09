@@ -8,7 +8,7 @@ Code, Schnittstelle und Meldungen sind englisch, diese Doku ist deutsch. English
 
 ```bash
 bin/skopos.js run    [--config <file>] [--db <file>]
-bin/skopos.js report --json [--since <ISO timestamp>] [--db <file>]
+bin/skopos.js report [--json] [--since <ISO timestamp>] [--db <file>]
 bin/skopos.js collect --config <file>
 ```
 
@@ -96,6 +96,10 @@ Retention: Einmal je 24 Stunden löscht der Lauf Läufe und Messwerte, die älte
 `retention_days` sind.
 
 ## Report
+
+`report` ohne `--json` gibt eine lesbare Tabelle für Menschen aus: Heartbeat-Zeile, Zähler und
+eine Zeile je Check, Probleme zuerst (`CRIT`, `WARN`, `UNKNOWN`, dann `ok`). Der Status ist immer
+ein Wort, nie nur Farbe. Der Sammler nutzt die JSON-Form.
 
 `report --json` öffnet die DB nur lesend und gibt aus (`report_version` 1):
 

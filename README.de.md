@@ -42,7 +42,7 @@ Lokal ausprobieren (ohne Installation, ohne `npm ci`):
 
 ```bash
 bin/skopos.js run --config config/example.json --db /tmp/skopos.db
-bin/skopos.js report --json --db /tmp/skopos.db
+bin/skopos.js report --db /tmp/skopos.db      # lesbare Tabelle; mit --json das Maschinenformat
 ```
 
 Installation auf dem Zielhost (Kopieren von Dateien, ein Systemnutzer und ein systemd-Timer;

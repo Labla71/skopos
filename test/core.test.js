@@ -344,7 +344,7 @@ test('CLI: errors abort loudly (config, database, arguments)', (t) => {
   assert.equal(b.status, 1);
   assert.match(b.stderr, /does not exist/);
   assert.equal(node(['report', '--json', '--since', 'yesterday', '--db', db]).status, 2);
-  assert.equal(node(['report', '--db', db]).status, 2);
+  assert.equal(node(['report', 'extra', '--db', db]).status, 2);
   assert.equal(node([]).status, 2);
 });
 

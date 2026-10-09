@@ -8,7 +8,7 @@ and messages are English; so is this page. Deutsch: [core.de.md](core.de.md).
 
 ```bash
 bin/skopos.js run    [--config <file>] [--db <file>]
-bin/skopos.js report --json [--since <ISO timestamp>] [--db <file>]
+bin/skopos.js report [--json] [--since <ISO timestamp>] [--db <file>]
 bin/skopos.js collect --config <file>
 ```
 
@@ -99,6 +99,10 @@ Retention: once every 24 hours the run deletes runs and measurements older than
 `retention_days`.
 
 ## Report
+
+`report` without `--json` prints a readable table for people: heartbeat line, counts and one
+row per check, problems first (`CRIT`, `WARN`, `UNKNOWN`, then `ok`). Status is always a word,
+never colour alone. The collector uses the JSON form.
 
 `report --json` opens the database read-only and outputs (`report_version` 1):
 
