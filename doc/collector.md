@@ -1,7 +1,7 @@
 # Skopos — Collector (`skopos collect`)
 
 How the collector works: polling, state machine, events, notifier, state file. The
-"why" is in [decisions.md](decisions.md), no. 12. Code, interface and messages are
+"why" is in [decisions.md](decisions.md), no. 12 and 15. Code, interface and messages are
 English; so is this page. Deutsch: [collector.de.md](collector.de.md).
 
 ## Overview
@@ -25,7 +25,7 @@ over SSH.
 A quiet run never calls the notifier at all. Output per run, one line:
 
 ```
-collect: example-host=ok/14 example-db=failed | problems=1 sent=0 throttled=0 held=0 dropped=0 failed=0 pending=0
+collect: example-host=ok/14 example-db=failed | problems=1 sent=0 throttled=0 suppressed=0 held=0 dropped=0 failed=0 pending=0
 ```
 
 `ok/<n>` means fully fetched with `n` new measurement rows, `failed` means the fetch
@@ -41,7 +41,7 @@ Example: [config/example-collect.json](../config/example-collect.json).
 
 | Key | Meaning | Default |
 |---|---|---|
-| `hosts` | list of `{ name, ssh?, local?, command? }`. `ssh` is the SSH alias (default: `name`), `local: true` calls `command` directly (the collector host itself), `command` is the absolute path to `skopos.js` | `command`: `/opt/skopos/bin/skopos.js` |
+| `hosts` | list of `{ name, ssh?, local?, command?, depends_on? }`. `ssh` is the SSH alias (default: `name`), `local: true` calls `command` directly (the collector host itself), `command` is the absolute path to `skopos.js`, `depends_on` see [Dependencies](#dependencies-outside-the-hosts) | `command`: `/opt/skopos/bin/skopos.js` |
 | `state_file` | absolute path of the state file; the directory must exist | — |
 | `notifier` | `{ type: "command", command: [<absolute path>, …], timeout_seconds? }` | `timeout_seconds` 30 |
 | `confirm_runs` | Skopos runs not ok, until a problem is confirmed | 2 |
@@ -53,6 +53,7 @@ Example: [config/example-collect.json](../config/example-collect.json).
 | `initial_lookback_minutes` | first poll of a host: how far back, not 24 h | 30 |
 | `fetch_timeout_seconds` | time limit per poll | 60 |
 | `overrides` | per check module (`oom`), per instance (`sqlite-query/rpc_denied_new`) or exact key with sub-key: `confirm_runs`, `recover_runs`, `crit_confirm_runs`; the more specific one wins | — |
+| `dependencies` | named dependencies outside the hosts, each `{ command: [<absolute path>, …], timeout_seconds? }`, see [Dependencies](#dependencies-outside-the-hosts) | `timeout_seconds` 30 |
 
 **Event counters need `confirm_runs: 1`.** Checks that report an occurrence in only one
 run (`oom`, `journal`, `boot`, `sqlite-query` with `delta`) would never be confirmed with
@@ -105,8 +106,61 @@ Entities, each per host:
   and not while the check failed as a whole (it then reports one row under its bare
   instance key, the key before the first `.`, or `<key>.?`): "unknown" is not "ok". Only the collector's state changes, never the
   host's database or configuration. A check that comes back is a normal entity again.
+- **Dependency outside the hosts:** see the next section.
 - **Delivery:** if the notifier fails, the event and all later ones of the same entity
   stay pending for the next run; the order per entity is preserved.
+
+## Dependencies outside the hosts
+
+The host dependency only covers causes on the host itself. A shared cause outside the hosts,
+such as the internet uplink, otherwise makes every affected check report on its own. For
+that, the collector configuration names dependencies, and each host says which of its
+checks depend on them:
+
+```json
+"dependencies": {
+  "internet": { "command": ["/usr/local/bin/example-uplink-status"], "timeout_seconds": 30 }
+},
+"hosts": [
+  { "name": "example-host", "depends_on": { "failed-units": ["internet"], "sqlite-query/api_errors": ["internet"] } }
+]
+```
+
+`depends_on` is keyed like `overrides` (module, module/instance, or exact key; the more
+specific one wins, an empty list removes the dependency again). It lives in the collector
+configuration, not in the host's: only the collector asks the dependency, the measuring
+service has no network and needs to know nothing about it.
+
+**Asked on demand, never polled.** Only when a confirmed `problem` of such a check is about
+to go out, the collector calls `<command…> --at <first_seen>` (ISO 8601 UTC to the second, e.g.
+`2026-01-05T02:01:08Z`): the start of the problem (first run not ok), not the time of confirmation. The question is "was it down when the
+problem began?", not "is it down now?": a 20-minute outage is usually over by the time the
+problem is confirmed. The command prints one JSON object:
+
+```json
+{ "affected": true, "outage": { "from": "2026-01-05T03:01:08+01:00", "to": "2026-01-05T03:23:39+01:00" }, "reason": "…" }
+```
+
+| Answer | What the collector does |
+|---|---|
+| `affected: true` with an ended outage (`to` set) | one event `dependency_problem` per outage (key: dependency and `from`), then the check's `problem` with `suppressed_by` and `dependency_outage`. Neither counts toward `max_notifications_per_hour`. |
+| `affected: true`, outage still going on (`to: null` or no `outage`) | the problem is held back and re-evaluated on every run. If the check recovers meanwhile, the problem and the recovery lapse together, without any notification. |
+| `affected: false` | the problem goes out as usual |
+| `affected: "unknown"`, exit code ≠ 0, timeout, unreadable output | the problem goes out as usual, with `dependency_unknown: { <name>: <reason> }`. "Unknown" is never "ok" and never "suppressed". |
+
+With several dependencies the first one that was down decides. Only checks (`kind: check`)
+are subject to it, not "does not measure" (`measurement`) and not host findings.
+
+The recovery of a suppressed problem carries `suppressed_by` and `dependency_outage` as well,
+so that a notifier can attach it to the outage rather than to a case of its own.
+
+**Price:** whether a problem is suppressed depends only on its start. A check that counts
+over a long window (e.g. "errors in the last 24 h") stays red long after the outage and
+remains suppressed until it is ok again; a genuinely new error of the same check within
+that stretch goes unnoticed. Broad checks (`failed-units`, `journal`) are suppressed only if
+their problem began inside the outage window. So list only checks that really depend on the
+dependency. During an outage that is still going on, nothing of the dependent checks goes
+out; the dependency is announced only once it is over.
 
 ## Events
 
@@ -123,7 +177,11 @@ An event is a snapshot at the time of the change, not of delivery (`event_versio
 }
 ```
 
-- `type`: `problem`, `recovery`, `unstable`, `calm` or `throttled`.
+- `type`: `problem`, `recovery`, `unstable`, `calm`, `throttled` or `dependency_problem`.
+- `dependency_problem` carries `dependency`, `outage` (`from`, `to`) and `reason`, but no
+  host or check. A `problem` or `recovery` attached to it carries `suppressed_by` (the
+  dependency) and `dependency_outage`; one whose dependency could not be asked carries
+  `dependency_unknown`.
 - A `recovery` after a check was removed from the configuration carries `removed: true`.
 - Host findings carry the message in `last.message` and, depending on the code,
   `exit_code` or `report_version`.
@@ -149,8 +207,8 @@ event arrives again.
 ## State file
 
 JSON, written atomically after every run (`<file>.tmp`, then `rename`), mode 0640. It
-holds watermarks, entities, pending events and the timestamps of the last
-notifications. If it is unreadable or has an unknown version, it is set aside
+holds watermarks, entities, pending events, the timestamps of the last
+notifications and the announced dependency outages (kept for 7 days). If it is unreadable or has an unknown version, it is set aside
 (`<file>.broken-<time>`) and the run fails loudly; the next one starts fresh.
 
 Its modification time is at the same time the collector's own heartbeat: a `json-file`

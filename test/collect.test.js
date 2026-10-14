@@ -7,7 +7,8 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { COLLECT_DEFAULTS, validateCollectConfig } from '../lib/collect/config.js';
 import { buildCommand, interpretFetch } from '../lib/collect/fetch.js';
-import { deliver, emptyState, overrideFor, processPoll } from '../lib/collect/machine.js';
+import { createDependencies, interpretDependency } from '../lib/collect/dependency.js';
+import { deliver, dependsOnFor, emptyState, overrideFor, processPoll } from '../lib/collect/machine.js';
 import { commandNotifier } from '../lib/collect/notify.js';
 import { collectOnce, formatPoll } from '../lib/collect/run.js';
 import { fileStateStore } from '../lib/collect/store.js';
@@ -21,20 +22,21 @@ const host2 = { ...host, name: 'example-host-2', ssh: 'example-host-2' };
 const baseCfg = (extra = {}) => ({ ...COLLECT_DEFAULTS, overrides: {}, hosts: [host], ...extra });
 
 // ---- Report sequences as fixtures: one Skopos run per entry, `rows` = { key: status | { check, status } }
-function report({ runs = [], stale = false, now = runs.at(-1)?.min ?? 0, catalog = [] }) {
+function report({ runs = [], stale = false, now = runs.at(-1)?.min ?? 0, catalog = [], t0 = T0 }) {
+  const ts = (min, ms = 0) => new Date(t0 + min * 60_000 + ms).toISOString();
   const history = runs.flatMap(({ min, rows }) => Object.entries(rows).map(([key, s]) => {
     const status = typeof s === 'object' ? s.status : s;
     return {
       check: typeof s === 'object' ? s.check : 'memory', key, status,
       reason: status === 'ok' ? null : `${key} reason line`,
-      value: status === 'unknown' ? null : 91.5, unit: '%', time: new Date(T0 + min * 60_000 + 50).toISOString(),
+      value: status === 'unknown' ? null : 91.5, unit: '%', time: ts(min, 50),
     };
   }));
   const last = runs.at(-1)?.min ?? now - 20;
   return {
-    report_version: 1, generated_at: iso(now), since: iso(now - 30),
-    heartbeat: { run_id: 1, started_at: iso(last), finished_at: new Date(T0 + last * 60_000 + 200).toISOString(), duration_ms: 200, age_seconds: (now - last) * 60, interval_minutes: 5, stale, counts: {}, version: 'x', runs_in_window: runs.length },
-    checks: catalog.map(([check, key]) => ({ check, key, status: 'ok', reason: null, value: 1, unit: '%', time: new Date(T0 + last * 60_000 + 50).toISOString() })), history,
+    report_version: 1, generated_at: ts(now), since: ts(now - 30),
+    heartbeat: { run_id: 1, started_at: ts(last), finished_at: ts(last, 200), duration_ms: 200, age_seconds: (now - last) * 60, interval_minutes: 5, stale, counts: {}, version: 'x', runs_in_window: runs.length },
+    checks: catalog.map(([check, key]) => ({ check, key, status: 'ok', reason: null, value: 1, unit: '%', time: ts(last, 50) })), history,
   };
 }
 const res = (r) => ({ code: 0, stdout: JSON.stringify(r), stderr: '' });
@@ -472,4 +474,189 @@ test('overrideFor: exact key over instance over module; invalid override keys ar
   for (const bad of ['a/b/c', 'x y', '/lead']) {
     assert.throws(() => validateCollectConfig({ ...validRaw(), overrides: { [bad]: { confirm_runs: 1 } } }), /key must be a check name or check\/key/, bad);
   }
+});
+
+// ---- dependencies outside the hosts (an internet outage: one notification instead of many)
+
+// Replay of a real night: the uplink dropped at 01:01:08 and was back at 01:23:39 (UTC).
+const N0 = Date.parse('2026-10-14T01:00:00Z');
+const OUTAGE = { from: '2026-10-14T01:01:08.000Z', to: '2026-10-14T01:23:39.000Z' };
+const nat = (min) => new Date(N0 + min * 60_000);
+const nightHosts = ['example-a', 'example-b', 'example-c', 'example-d'].map((name) => ({ ...host, name, ssh: name }));
+const nightCfg = (dependsOn, only = null) => baseCfg({
+  hosts: nightHosts.filter((h) => !only || h.name === only).map((h) => ({ ...h, depends_on: dependsOn })),
+  dependencies: { internet: { command: ['/usr/local/bin/example-uplink'], timeout_seconds: 30 } },
+  overrides: { 'failed-units': { crit_confirm_runs: 1 }, journal: { confirm_runs: 1 } },
+});
+const allDepend = { 'failed-units': ['internet'], 'sqlite-query/app_health': ['internet'], journal: ['internet'], mount: ['internet'] };
+
+// Behaves like the documented dependency command: down right now -> affected without an outage;
+// afterwards a start inside the window (2 min before, 5 min after) is affected.
+function uplinkStub(clock, outage = OUTAGE) {
+  const from = Date.parse(outage.from);
+  const to = Date.parse(outage.to);
+  const stub = { calls: [], query: async (atIso) => {
+    stub.calls.push(atIso);
+    const now = clock.now.getTime();
+    const t = Date.parse(atIso);
+    if (now >= from && now < to) return { affected: true, outage: null, reason: 'down right now' };
+    if (now >= to && t >= from - 2 * 60_000 && t <= to + 5 * 60_000) return { affected: true, outage, reason: 'inside the outage window' };
+    return { affected: false, outage: null, reason: 'no outage around this time' };
+  } };
+  return stub;
+}
+function depEnv(cfg) {
+  const clock = { now: nat(0) };
+  const uplink = uplinkStub(clock);
+  const e = { cfg, notifier: fakeNotifier(), store: memStore(), clock, uplink };
+  e.poll = (min, answers) => { clock.now = nat(min); return collectOnce({ cfg, store: e.store, notifier: e.notifier, dependencies: { internet: uplink }, now: nat(min), exec: async (h) => answers[h.name] }); };
+  return e;
+}
+const sq = (status) => ({ check: 'sqlite-query', status });
+const nightRows = {
+  'example-a': (m) => ({ 'failed.failed': { check: 'failed-units', status: m >= 5 && m <= 30 ? 'crit' : 'ok' } }),
+  'example-b': (m) => ({
+    app_health: sq(m >= 20 ? 'warn' : 'ok'),
+    'errors.errors': { check: 'journal', status: m === 25 ? 'warn' : 'ok' },
+    'mounts.mnt_share': { check: 'mount', status: m === 15 || m === 20 ? 'crit' : 'ok' },
+  }),
+  'example-c': (m) => ({ app_health: sq(m >= 20 ? 'warn' : 'ok') }),
+  'example-d': (m) => ({ app_health: sq(m >= 20 ? 'warn' : 'ok') }),
+};
+const nightAnswers = (run) => Object.fromEntries(Object.entries(nightRows).map(([name, rows]) => [name, res(report({ runs: [{ min: run, rows: rows(run) }], t0: N0 }))]));
+const label = (ev) => `${ev.type}:${ev.host ?? ev.dependency}:${ev.key ?? ''}${ev.suppressed_by ? `>${ev.suppressed_by}` : ''}`;
+
+test('outage replay: one dependency_problem, every affected check suppressed, no throttling', async () => {
+  const e = depEnv(nightCfg(allDepend));
+  const held = [];
+  for (let run = 0; run <= 60; run += 5) held.push((await e.poll(run + 2, nightAnswers(run))).stats.held);
+  const evs = e.notifier.events;
+  assert.deepEqual(evs.map(label), [
+    'dependency_problem:internet:',
+    'problem:example-a:failed.failed>internet',
+    'problem:example-b:app_health>internet',
+    'problem:example-b:errors.errors>internet',
+    'problem:example-c:app_health>internet',
+    'problem:example-d:app_health>internet',
+    'recovery:example-b:errors.errors>internet',
+    'recovery:example-a:failed.failed>internet',
+  ]);
+  assert.deepEqual(evs[0].outage, OUTAGE);
+  assert.ok(held.slice(1, 5).every((n) => n > 0), `held during the outage: ${held}`);
+  assert.ok(!evs.some((ev) => ev.type === 'throttled'));
+  assert.deepEqual((await e.store.load()).notified, [], 'suppressed problems do not count toward throttling');
+  // The mount problem began inside the window and recovered before the uplink was back: dropped.
+  assert.ok(!evs.some((ev) => ev.key === 'mounts.mnt_share'));
+  // Asked about the start of each problem, not the time of confirmation.
+  assert.ok(e.uplink.calls.includes(new Date(N0 + 5 * 60_000 + 50).toISOString()));
+  assert.ok(e.uplink.calls.every((t) => t >= '2026-10-14T01:05'), 'never asked before a check went bad');
+});
+
+test('dependency: a problem that began after the outage goes out as usual', async () => {
+  const e = depEnv(nightCfg(allDepend, 'example-a'));
+  // 05:00 local time = 03:00 UTC, long after the window
+  await e.poll(122, { 'example-a': res(report({ runs: [{ min: 120, rows: nightRows['example-a'](10) }], t0: N0 })) });
+  assert.deepEqual(e.notifier.events.map(label), ['problem:example-a:failed.failed']);
+  assert.equal(e.notifier.events[0].dependency_unknown, undefined);
+  assert.equal(e.uplink.calls.length, 1);
+});
+
+test('dependency: down right now -> held; back, and the check recovered -> both lapse without a notification', async () => {
+  const e = depEnv(nightCfg(allDepend, 'example-a'));
+  const run = (m, status) => ({ 'example-a': res(report({ runs: [{ min: m, rows: { 'failed.failed': { check: 'failed-units', status } } }], t0: N0 })) });
+  const r1 = await e.poll(7, run(5, 'crit'));
+  assert.equal(r1.stats.held, 1);
+  for (const m of [10, 15, 20]) await e.poll(m + 2, run(m, 'crit'));
+  await e.poll(27, run(25, 'ok')); // uplink back, latest run ok: keep waiting
+  const r2 = await e.poll(32, run(30, 'ok'));
+  assert.deepEqual(e.notifier.events, []);
+  assert.equal(r2.pending, 0);
+  assert.equal(r2.stats.dropped, 2);
+});
+
+test('dependency: asked about the start of the problem, not about its confirmation after the window', async () => {
+  const cfg = nightCfg(allDepend, 'example-c');
+  cfg.overrides['sqlite-query/app_health'] = { confirm_runs: 4 }; // confirmed at 01:35, after the 5-minute tail
+  const e = depEnv(cfg);
+  for (let run = 0; run <= 40; run += 5) await e.poll(run + 2, { 'example-c': res(report({ runs: [{ min: run, rows: nightRows['example-c'](run) }], t0: N0 })) });
+  assert.deepEqual(e.notifier.events.map(label), ['dependency_problem:internet:', 'problem:example-c:app_health>internet']);
+  assert.deepEqual(e.uplink.calls, [new Date(N0 + 20 * 60_000 + 50).toISOString()]);
+});
+
+test('dependency: an outage without any affected check is never asked about and notifies nothing', async () => {
+  const e = depEnv(nightCfg(allDepend, 'example-a'));
+  for (let run = 0; run <= 40; run += 5) await e.poll(run + 2, { 'example-a': res(report({ runs: [{ min: run, rows: nightRows['example-a'](0) }], t0: N0 })) });
+  assert.deepEqual(e.notifier.events, []);
+  assert.deepEqual(e.uplink.calls, []);
+});
+
+test('dependency: a lagging check (24 h count) stays suppressed until it is ok again', async () => {
+  const e = depEnv(nightCfg(allDepend, 'example-c'));
+  const hourly = (fromRun, toRun) => {
+    const runs = [];
+    for (let m = fromRun; m <= toRun; m += 5) runs.push({ min: m, rows: { app_health: sq(m >= 20 && m < 20 + 24 * 60 ? 'warn' : 'ok') } });
+    return { 'example-c': res(report({ runs, t0: N0 })) };
+  };
+  await e.poll(17, hourly(0, 15));
+  for (let h = 0; h <= 25; h += 1) await e.poll(20 + h * 60 + 7, hourly(20 + h * 60, 20 + h * 60 + 55));
+  assert.deepEqual(e.notifier.events.map(label), ['dependency_problem:internet:', 'problem:example-c:app_health>internet', 'recovery:example-c:app_health>internet']);
+  assert.equal(e.notifier.events[2].dependency_outage.from, OUTAGE.from);
+  assert.ok(Date.parse(e.notifier.events[2].time) >= N0 + (20 + 24 * 60) * 60_000);
+});
+
+test('dependency: notifier down while announcing the outage -> retried, still announced once', async () => {
+  const e = depEnv(nightCfg(allDepend));
+  e.notifier.fail = true;
+  for (let run = 0; run <= 25; run += 5) await e.poll(run + 2, nightAnswers(run));
+  e.notifier.fail = false;
+  await e.poll(32, nightAnswers(30));
+  const evs = e.notifier.events;
+  assert.equal(evs.filter((ev) => ev.type === 'dependency_problem').length, 1);
+  assert.ok(evs.filter((ev) => ev.type === 'problem').every((ev) => ev.suppressed_by === 'internet'));
+});
+
+test('dependency command: "unknown", exit code, timeout or garbage -> the problem goes out with dependency_unknown', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'skopos-dep-'));
+  const argsFile = join(dir, 'args.json');
+  const variants = {
+    unknown: [`require("fs").writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(1))); console.log(JSON.stringify({ affected: "unknown", outage: null, reason: "router not reachable" }))`, /router not reachable/],
+    exit: ['console.error("no credentials"); process.exit(3)', /exited with 3: no credentials/],
+    timeout: ['setTimeout(() => {}, 5000)', /timed out after 1 s/],
+    garbage: ['console.log("<html>")', /not JSON/],
+  };
+  for (const [name, [code, why]] of Object.entries(variants)) {
+    const cfg = nightCfg(allDepend, 'example-a');
+    const deps = createDependencies({ internet: { command: [process.execPath, '-e', code, '--'], timeout_seconds: 1 } });
+    const notifier = fakeNotifier();
+    const r = await collectOnce({ cfg, store: memStore(), notifier, dependencies: deps, now: nat(122), exec: async () => res(report({ runs: [{ min: 120, rows: nightRows['example-a'](10) }], t0: N0 })) });
+    assert.deepEqual(notifier.events.map(label), ['problem:example-a:failed.failed'], name);
+    assert.match(notifier.events[0].dependency_unknown.internet, why, name);
+    assert.equal(r.stats.held, 0, name);
+  }
+  assert.deepEqual(JSON.parse(readFileSync(argsFile, 'utf8')), ['--at', '2026-10-14T03:00:00Z']); // to the second, no fraction
+});
+
+test('interpretDependency: only true/false/"unknown"; a malformed outage is unknown, never affected', () => {
+  assert.equal(interpretDependency('{"affected":false}').affected, false);
+  assert.deepEqual(interpretDependency(JSON.stringify({ affected: true, outage: OUTAGE, reason: 'x' })).outage, OUTAGE);
+  assert.deepEqual(interpretDependency('{"affected":true,"outage":{"from":"2026-10-14T01:00:00Z"}}').outage.to, null);
+  for (const bad of ['{"affected":"yes"}', '{"affected":true,"outage":{"from":"soon"}}', '[]', 'null', '']) assert.equal(interpretDependency(bad).affected, 'unknown', bad);
+});
+
+test('config: dependencies and depends_on are validated; most specific depends_on wins', () => {
+  const raw = { ...validRaw(), dependencies: { internet: { command: ['/usr/local/bin/example-uplink'] } }, hosts: [{ name: 'example-host', depends_on: { journal: ['internet'], 'sqlite-query/app_health': ['internet'], 'sqlite-query/app_health.x': [] } }] };
+  const c = validateCollectConfig(raw);
+  assert.equal(c.dependencies.internet.timeout_seconds, 30);
+  assert.deepEqual(dependsOnFor(c, 'example-host', 'journal', 'errors.errors'), ['internet']);
+  assert.deepEqual(dependsOnFor(c, 'example-host', 'sqlite-query', 'app_health'), ['internet']);
+  assert.deepEqual(dependsOnFor(c, 'example-host', 'sqlite-query', 'app_health.x'), []);
+  assert.deepEqual(dependsOnFor(c, 'example-host', 'sqlite-query', 'other'), []);
+  assert.deepEqual(dependsOnFor(c, 'missing-host', 'journal', 'errors'), []);
+  const broken = { ...validRaw(), dependencies: { internet: { command: ['relative'], extra: 1 }, 'a b': {} }, hosts: [{ name: 'example-host', depends_on: { journal: ['uplink'], 'x y': ['internet'], disk: 'internet' } }] };
+  assert.throws(() => validateCollectConfig(broken), (e) => {
+    for (const m of ['dependencies.internet: unknown key "extra"', 'dependencies.internet: command must be', 'dependencies.a b: name contains', 'unknown dependency "uplink"', 'key "x y" must be', 'depends_on.disk must be a list']) {
+      assert.ok(e.messages.some((x) => x.includes(m)), `missing: ${m}\n${e.messages.join('\n')}`);
+    }
+    return true;
+  });
 });

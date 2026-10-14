@@ -10,6 +10,7 @@ import { buildReport } from '../lib/report.js';
 import { formatReport } from '../lib/report-text.js';
 import { DEFAULT_DB_PATH, openStore, openStoreReadOnly } from '../lib/store.js';
 import { loadCollectConfig } from '../lib/collect/config.js';
+import { createDependencies } from '../lib/collect/dependency.js';
 import { createNotifier } from '../lib/collect/notify.js';
 import { collectOnce, formatPoll } from '../lib/collect/run.js';
 import { fileStateStore } from '../lib/collect/store.js';
@@ -86,7 +87,7 @@ try {
     }
   } else if (command === 'collect' && positionals.length === 1 && values.config) {
     const cfg = loadCollectConfig(values.config);
-    const r = await collectOnce({ cfg, store: fileStateStore(cfg.state_file), notifier: createNotifier(cfg.notifier) });
+    const r = await collectOnce({ cfg, store: fileStateStore(cfg.state_file), notifier: createNotifier(cfg.notifier), dependencies: createDependencies(cfg.dependencies) });
     await writeOut(`${formatPoll(r)}\n`);
     // Fail loudly: undelivered events wait in the state, the unit shows up as failed.
     if (r.stats.failed > 0) fail(`notifier failed: ${r.errors[0] ?? '?'}`, 1);

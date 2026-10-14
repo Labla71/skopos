@@ -195,3 +195,35 @@ Ausgangslage der Messungen: Node 22.23, kleinste Zielmaschine mit 2 Kernen, 1,9 
   oder wird zur Übersetzung vorgemerkt; `bin/install.sh` kopiert den ganzen `doc/`-Ordner nach
   `/opt/skopos/doc`, damit beide Sprachen auch auf dem installierten Host selbst verfügbar
   sind, ohne Repo-Checkout.
+
+## 15. Abhängigkeiten außerhalb der Hosts: bei Bedarf gefragt, nach dem Problembeginn
+
+- **Kontext:** Der Sammler kannte nur die Host-Abhängigkeit (Entscheidung 12): Ein
+  unerreichbarer Host oder ein veralteter Heartbeat hält die Check-Befunde dieses Hosts
+  zurück. Eine gemeinsame Ursache außerhalb der Hosts, etwa eine ausgefallene
+  Internetleitung, kannte er nicht. Bei einem 22-minütigen Ausfall meldete jeder Check mit
+  Netzbezug auf mehreren Hosts einzeln, bis die Drosselung griff; jede dieser Meldungen musste
+  einzeln geprüft und verworfen werden.
+- **Entscheidung:** Die Sammler-Konfiguration nennt Abhängigkeiten, je mit einem Befehl; jeder
+  Host führt in `depends_on`, welche seiner Checks daran hängen. Bevor ein bestätigtes Problem
+  eines solchen Checks hinausgeht, fragt der Sammler den Befehl nach dem **Beginn** des
+  Problems (`--at <first_seen>`). Damals weg: ein `dependency_problem` je Ausfall, das Problem
+  selbst nur mit `suppressed_by` markiert, beides ohne Anrechnung auf die Drosselung. Jetzt
+  weg: zurückhalten und in jedem Lauf neu bewerten, wie bei einem toten Host. Unbekannt,
+  Fehler oder Zeitüberschreitung: normal melden, mit `dependency_unknown`. Details:
+  [collector.de.md](collector.de.md#abhängigkeiten-außerhalb-der-hosts).
+- **Begründung:** Fragen bei Bedarf statt Daueraufzeichnung hält Skopos schlank und kostet an
+  einem ruhigen Tag nichts; die Vergangenheit beantwortet die Abhängigkeit selbst (z. B. das
+  Ereignisprotokoll eines Routers). Der Problembeginn, nicht der Bestätigungszeitpunkt, ist der
+  richtige Moment: Ein kurzer Ausfall ist meist vorbei, wenn ein Problem bestätigt ist, und die
+  Frage „ist sie jetzt weg?“ würde ihn als echten Fehler melden. `depends_on` steht in der
+  Sammler-Konfiguration, weil nur der Sammler fragt; der Messdienst bleibt ohne Netz
+  (Entscheidung 7). „Unbekannt“ ist nicht „ok“ (Grundsatz 3) und auch nicht „unterdrückt“:
+  Eine nicht abfragbare Abhängigkeit darf keinen echten Fehler verstecken.
+- **Folgen:** Ein Check, der über ein langes Fenster zählt, bleibt unterdrückt, bis er wieder ok
+  ist; ein echter neuer Fehler desselben Checks in dieser Strecke geht darin unter. Ein falsches
+  `depends_on` kann echte Fehler verstecken, deshalb gehören nur Checks mit echtem Bezug zur
+  Abhängigkeit hinein. Während eines andauernden Ausfalls geht von den abhängigen Checks nichts
+  hinaus. Das Ereignisformat bleibt bei `event_version` 1 und bekommt den Typ
+  `dependency_problem` sowie die Felder `suppressed_by`, `dependency_outage`,
+  `dependency_unknown`; ein Notifier muss sie kennen, bevor eine Abhängigkeit konfiguriert wird.

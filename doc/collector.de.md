@@ -1,7 +1,7 @@
 # Skopos — Sammler (`skopos collect`)
 
 Wie der Sammler arbeitet: Abholung, Zustandsmaschine, Ereignisse, Notifier, Zustandsdatei.
-Das „Warum“ steht in [decisions.de.md](decisions.de.md), Nr. 12. Code, Schnittstelle und
+Das „Warum“ steht in [decisions.de.md](decisions.de.md), Nr. 12 und 15. Code, Schnittstelle und
 Meldungen sind englisch, diese Doku ist deutsch. English: [collector.md](collector.md).
 
 ## Überblick
@@ -25,7 +25,7 @@ SSH erreicht.
 Ein ruhiger Lauf ruft den Notifier gar nicht auf. Ausgabe je Lauf, eine Zeile:
 
 ```
-collect: example-host=ok/14 example-db=failed | problems=1 sent=0 throttled=0 held=0 dropped=0 failed=0 pending=0
+collect: example-host=ok/14 example-db=failed | problems=1 sent=0 throttled=0 suppressed=0 held=0 dropped=0 failed=0 pending=0
 ```
 
 `ok/<n>` heißt vollständig abgeholt mit `n` neuen Messzeilen, `failed` heißt Abholung
@@ -41,7 +41,7 @@ JSON, streng geprüft wie die Mess-Config (`lib/collect/config.js`). Beispiel:
 
 | Schlüssel | Bedeutung | Vorgabe |
 |---|---|---|
-| `hosts` | Liste `{ name, ssh?, local?, command? }`. `ssh` ist der SSH-Alias (Vorgabe: `name`), `local: true` ruft `command` direkt auf (der Sammler-Host selbst), `command` ist der absolute Pfad zu `skopos.js` | `command`: `/opt/skopos/bin/skopos.js` |
+| `hosts` | Liste `{ name, ssh?, local?, command?, depends_on? }`. `ssh` ist der SSH-Alias (Vorgabe: `name`), `local: true` ruft `command` direkt auf (der Sammler-Host selbst), `command` ist der absolute Pfad zu `skopos.js`, `depends_on` siehe [Abhängigkeiten](#abhängigkeiten-außerhalb-der-hosts) | `command`: `/opt/skopos/bin/skopos.js` |
 | `state_file` | absoluter Pfad der Zustandsdatei; das Verzeichnis muss existieren | — |
 | `notifier` | `{ type: "command", command: [<absoluter Pfad>, …], timeout_seconds? }` | `timeout_seconds` 30 |
 | `confirm_runs` | Skopos-Läufe nicht ok, bis ein Problem bestätigt ist | 2 |
@@ -53,6 +53,7 @@ JSON, streng geprüft wie die Mess-Config (`lib/collect/config.js`). Beispiel:
 | `initial_lookback_minutes` | erste Abholung eines Hosts: so weit zurück, nicht 24 h | 30 |
 | `fetch_timeout_seconds` | Zeitgrenze je Abholung | 60 |
 | `overrides` | je Check-Modul (`oom`), je Instanz (`sqlite-query/rpc_denied_new`) oder exakter Schlüssel mit Teilschlüssel: `confirm_runs`, `recover_runs`, `crit_confirm_runs`; das Genauere gewinnt | — |
+| `dependencies` | benannte Abhängigkeiten außerhalb der Hosts, je `{ command: [<absoluter Pfad>, …], timeout_seconds? }`, siehe [Abhängigkeiten](#abhängigkeiten-außerhalb-der-hosts) | `timeout_seconds` 30 |
 
 **Ereignis-Zähler brauchen `confirm_runs: 1`.** Checks, die ein Vorkommen nur in einem Lauf
 melden (`oom`, `journal`, `boot`, `sqlite-query` mit `delta`), wären mit der Vorgabe 2 nie bestätigt: Im
@@ -107,8 +108,62 @@ Entitäten, jeweils je Host:
   nicht „ok“. Nur der Zustand des
   Sammlers ändert sich, nie Datenbank oder Konfiguration des Hosts. Kommt ein Check
   zurück, ist er wieder eine normale Entität.
+- **Abhängigkeit außerhalb der Hosts:** siehe nächster Abschnitt.
 - **Zustellung:** Scheitert der Notifier, bleiben das Ereignis und alle späteren derselben
   Entität für den nächsten Lauf liegen; die Reihenfolge je Entität bleibt erhalten.
+
+## Abhängigkeiten außerhalb der Hosts
+
+Die Host-Abhängigkeit deckt nur Ursachen auf dem Host selbst ab. Eine gemeinsame Ursache
+außerhalb der Hosts, etwa die Internetleitung, lässt sonst jeden betroffenen Check einzeln
+melden. Dafür nennt die Sammler-Konfiguration Abhängigkeiten, und jeder Host sagt, welche
+seiner Checks daran hängen:
+
+```json
+"dependencies": {
+  "internet": { "command": ["/usr/local/bin/example-uplink-status"], "timeout_seconds": 30 }
+},
+"hosts": [
+  { "name": "example-host", "depends_on": { "failed-units": ["internet"], "sqlite-query/api_errors": ["internet"] } }
+]
+```
+
+`depends_on` ist geschlüsselt wie `overrides` (Modul, Modul/Instanz oder exakter Schlüssel; das
+Genauere gewinnt, eine leere Liste hebt die Abhängigkeit wieder auf). Es steht in der
+Sammler-Konfiguration, nicht in der des Hosts: Nur der Sammler fragt die Abhängigkeit, der
+Messdienst hat kein Netz und muss nichts davon wissen.
+
+**Nur bei Bedarf gefragt, nie dauernd abgefragt.** Erst wenn ein bestätigtes `problem` eines
+solchen Checks hinausgehen soll, ruft der Sammler `<command…> --at <first_seen>` auf (ISO 8601 in UTC,
+sekundengenau, z. B. `2026-01-05T02:01:08Z`): den Beginn des Problems (erster Lauf nicht ok), nicht den Zeitpunkt der Bestätigung. Die Frage ist
+„war sie weg, als das Problem begann?“, nicht „ist sie jetzt weg?“: Ein 20-Minuten-Ausfall ist
+meist vorbei, wenn das Problem bestätigt ist. Der Befehl gibt ein JSON-Objekt aus:
+
+```json
+{ "affected": true, "outage": { "from": "2026-01-05T03:01:08+01:00", "to": "2026-01-05T03:23:39+01:00" }, "reason": "…" }
+```
+
+| Antwort | Was der Sammler tut |
+|---|---|
+| `affected: true` mit beendetem Ausfall (`to` gesetzt) | ein Ereignis `dependency_problem` je Ausfall (Schlüssel: Abhängigkeit und `from`), danach das `problem` des Checks mit `suppressed_by` und `dependency_outage`. Beides zählt nicht in `max_notifications_per_hour`. |
+| `affected: true`, Ausfall dauert an (`to: null` oder kein `outage`) | das Problem wird zurückgehalten und in jedem Lauf neu bewertet. Erholt sich der Check inzwischen, verfallen Problem und Erholung gemeinsam, ohne jede Meldung. |
+| `affected: false` | das Problem geht wie gewohnt hinaus |
+| `affected: "unknown"`, Exit-Code ≠ 0, Zeitüberschreitung, unlesbare Ausgabe | das Problem geht wie gewohnt hinaus, mit `dependency_unknown: { <name>: <Grund> }`. „Unbekannt“ ist nie „ok“ und nie „unterdrückt“. |
+
+Bei mehreren Abhängigkeiten entscheidet die erste, die weg war. Es betrifft nur Checks
+(`kind: check`), nicht „misst nicht“ (`measurement`) und keine Host-Befunde.
+
+Die Erholung eines unterdrückten Problems trägt ebenfalls `suppressed_by` und
+`dependency_outage`, damit ein Notifier sie dem Ausfall zuordnen kann statt einem eigenen
+Vorgang.
+
+**Preis:** Ob ein Problem unterdrückt wird, hängt nur an seinem Beginn. Ein Check, der über ein
+langes Fenster zählt (z. B. „Fehler der letzten 24 h“), bleibt lange nach dem Ausfall rot und
+bleibt unterdrückt, bis er wieder ok ist; ein echter neuer Fehler desselben Checks in dieser
+Strecke geht darin unter. Breite Checks (`failed-units`, `journal`) werden nur unterdrückt, wenn
+ihr Problem im Ausfallfenster begann. Deshalb nur Checks eintragen, die wirklich an der
+Abhängigkeit hängen. Während eines andauernden Ausfalls geht von den abhängigen Checks nichts
+hinaus; die Abhängigkeit wird erst gemeldet, wenn er vorbei ist.
 
 ## Ereignisse
 
@@ -126,7 +181,11 @@ Ein Ereignis ist ein Schnappschuss zum Zeitpunkt des Wechsels, nicht der Zustell
 }
 ```
 
-- `type`: `problem`, `recovery`, `unstable`, `calm` oder `throttled`.
+- `type`: `problem`, `recovery`, `unstable`, `calm`, `throttled` oder `dependency_problem`.
+- `dependency_problem` trägt `dependency`, `outage` (`from`, `to`) und `reason`, aber keinen
+  Host und keinen Check. Ein zugeordnetes `problem` oder `recovery` trägt `suppressed_by` (die
+  Abhängigkeit) und `dependency_outage`; eines, dessen Abhängigkeit nicht gefragt werden
+  konnte, trägt `dependency_unknown`.
 - Ein `recovery` nach Entfernen eines Checks aus der Konfiguration trägt `removed: true`.
 - Host-Befunde tragen in `last.message` die Meldung und je nach Code `exit_code` oder
   `report_version`.
@@ -150,7 +209,8 @@ Stirbt der Sammler nach der Zustellung und vor dem Speichern, kommt dasselbe Ere
 ## Zustandsdatei
 
 JSON, nach jedem Lauf atomar geschrieben (`<datei>.tmp`, dann `rename`), Modus 0640. Sie hält
-Wasserstände, Entitäten, anstehende Ereignisse und die Zeitpunkte der letzten Meldungen. Ist
+Wasserstände, Entitäten, anstehende Ereignisse, die Zeitpunkte der letzten Meldungen und die
+gemeldeten Ausfälle von Abhängigkeiten (7 Tage). Ist
 sie unlesbar oder hat eine unbekannte Version, wird sie beiseitegelegt
 (`<datei>.broken-<zeit>`) und der Lauf scheitert laut; der nächste beginnt neu.
 

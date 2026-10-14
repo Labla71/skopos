@@ -206,3 +206,35 @@ their owner.
   per language) or is flagged for translation; `bin/install.sh` ships the whole `doc/`
   directory to `/opt/skopos/doc`, so both languages are available on the installed
   host itself, without a repo checkout.
+
+## 15. Dependencies outside the hosts: asked on demand, about the start of the problem
+
+- **Context:** The collector knew only the host dependency (decision 12): an unreachable host
+  or a stale heartbeat holds back that host's check findings. A shared cause outside the
+  hosts, such as a dropped internet uplink, was unknown to it. During one 22-minute outage
+  every check with a network relation on several hosts reported on its own, until
+  throttling set in; each of these notifications had to be examined and dismissed
+  separately.
+- **Decision:** The collector configuration names dependencies, each with a command; each
+  host lists in `depends_on` which of its checks depend on them. Before a confirmed problem
+  of such a check goes out, the collector asks the command about the **start** of the
+  problem (`--at <first_seen>`). Down at that time: one `dependency_problem` per outage, the
+  problem itself only flagged `suppressed_by`, neither counting toward throttling. Down right
+  now: hold back and re-evaluate on every run, as for a dead host. Unknown, error or timeout:
+  report as usual, with `dependency_unknown`. Details:
+  [collector.md](collector.md#dependencies-outside-the-hosts).
+- **Rationale:** Asking on demand instead of recording the dependency continuously keeps
+  Skopos lean and costs nothing on a quiet day; the dependency's own history (e.g. a
+  router's event log) answers the question about the past. The start of the problem, not
+  the time of confirmation, is the right moment: a short outage is usually over by the time
+  a problem is confirmed, and asking "is it down now?" would report it as a genuine fault.
+  `depends_on` lives in the collector configuration because only the collector asks; the
+  measuring service stays without network (decision 7). "Unknown" is not "ok" (principle 3)
+  and not "suppressed" either: a dependency that cannot be asked must not hide a real fault.
+- **Consequences:** A check that counts over a long window stays suppressed until it is ok
+  again; a genuinely new fault of the same check within that stretch goes unnoticed. A wrong
+  `depends_on` can hide real faults, so only checks with a real relation to the dependency
+  belong there. During an outage that is still going on nothing of the dependent checks goes
+  out. The event format stays at `event_version` 1 and gains the type `dependency_problem`
+  and the fields `suppressed_by`, `dependency_outage`, `dependency_unknown`; a notifier must
+  know them before a dependency is configured.

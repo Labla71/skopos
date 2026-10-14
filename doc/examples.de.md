@@ -213,6 +213,32 @@ aber ohne Unterscheidung „geplant/ungeplant“ und ohne einmaliges Ereignis (d
 bestehen, solange die Uptime unter der Schwelle liegt). Für die meisten Fälle ist `boot` die
 bessere Wahl.
 
+## Sammler: eine Meldung für einen Internetausfall
+
+Dieses Rezept gilt für die Sammler-Konfiguration (`skopos collect`), nicht für die `checks`
+eines Hosts. Teilen sich mehrere Hosts eine Internetleitung, meldet bei einem Ausfall jeder
+Check mit Netzbezug einzeln. Eine Abhängigkeit macht daraus eine Meldung:
+
+```json
+{
+  "dependencies": {
+    "internet": { "command": ["/usr/local/bin/example-uplink-status"], "timeout_seconds": 30 }
+  },
+  "hosts": [
+    { "name": "example-host", "depends_on": { "failed-units": ["internet"], "mount/mounts": ["internet"] } },
+    { "name": "example-db", "ssh": "monitor@example-db", "depends_on": { "sqlite-query/api_errors": ["internet"] } }
+  ]
+}
+```
+
+Den Befehl stellst du selbst: Er wird als `example-uplink-status --at <Zeit>` nur aufgerufen,
+wenn ein bestätigtes Problem eines eingetragenen Checks hinausgehen soll, und beantwortet, ob
+die Leitung weg war, als dieses Problem begann, z. B. aus dem Ereignisprotokoll des Routers. Er
+gibt `{ "affected": true | false | "unknown", "outage": { "from", "to" } | null, "reason": "…" }`
+aus. Nur Checks eintragen, die wirklich an der Leitung hängen: Ein unterdrückter Check meldet
+nichts Neues, bis er wieder ok ist. Details:
+[collector.de.md](collector.de.md#abhängigkeiten-außerhalb-der-hosts).
+
 ## Pflege dieses Dokuments
 
 `test/doc.test.js` prüft bei jedem `npm test`, dass jeder Check aus `lib/checks/index.js`

@@ -214,6 +214,31 @@ simpler than `boot`, but without a planned/unplanned distinction and without a
 one-shot event (the finding persists as long as the uptime is below the threshold).
 For most cases, `boot` is the better choice.
 
+## Collector: one notification for an internet outage
+
+This recipe is for the collector configuration (`skopos collect`), not for a host's `checks`.
+If several hosts share an internet uplink, an outage makes every check with a network relation
+report on its own. A dependency turns that into one notification:
+
+```json
+{
+  "dependencies": {
+    "internet": { "command": ["/usr/local/bin/example-uplink-status"], "timeout_seconds": 30 }
+  },
+  "hosts": [
+    { "name": "example-host", "depends_on": { "failed-units": ["internet"], "mount/mounts": ["internet"] } },
+    { "name": "example-db", "ssh": "monitor@example-db", "depends_on": { "sqlite-query/api_errors": ["internet"] } }
+  ]
+}
+```
+
+The command is yours: it is called as `example-uplink-status --at <time>` only when a
+confirmed problem of a listed check is about to go out, and answers whether the uplink was
+down when that problem began, e.g. from the router's event log. It prints
+`{ "affected": true | false | "unknown", "outage": { "from", "to" } | null, "reason": "…" }`.
+List only checks that really depend on the uplink: a suppressed check reports nothing new
+until it is ok again. Details: [collector.md](collector.md#dependencies-outside-the-hosts).
+
 ## Maintaining this document
 
 `test/doc.test.js` checks on every `npm test` that every check from
