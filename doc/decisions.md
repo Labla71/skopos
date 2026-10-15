@@ -238,3 +238,20 @@ their owner.
   out. The event format stays at `event_version` 1 and gains the type `dependency_problem`
   and the fields `suppressed_by`, `dependency_outage`, `dependency_unknown`; a notifier must
   know them before a dependency is configured.
+
+## 16. Reminder for problems that stay red
+
+- **Context:** The collector reports confirmed state changes only. A problem that stays red
+  after its ticket was closed is never reported again; the only thing that caught this was a
+  daily AI evaluation next to the collector, which mostly produced false alarms and duplicates
+  of what the collector had already sent.
+- **Decision:** A confirmed problem that has not been reported for `remind_after_hours`
+  (default 24, `0` = off) goes out again as a `problem` event with `reminder: true` and
+  `since`. The clock is the last delivered problem of the entity; it is not a new state and
+  does not touch recovery or flapping.
+- **Rationale:** The notifier already turns a repeated problem into a note on an open ticket
+  or a new ticket after it was closed, so the collector needs no knowledge of tickets. Fewer
+  evaluators mean fewer places where the same finding is judged twice.
+- **Consequences:** A permanently red check reports once per interval. Reminders count toward
+  throttling. The event format stays at `event_version` 1 and gains the fields `reminder` and
+  `since` on `problem`.

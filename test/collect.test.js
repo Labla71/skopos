@@ -660,3 +660,86 @@ test('config: dependencies and depends_on are validated; most specific depends_o
     return true;
   });
 });
+
+// ---- reminder for problems that stay red
+
+const HOUR = 60;
+async function redFor(e, hours, from = 0) {
+  for (let m = from; m <= from + hours * HOUR; m += 5) await poll(e, m + 1, { 'example-host': res(report({ runs: [bad(m)] })) });
+}
+
+test('reminder: a problem that stays red is reported again after remind_after_hours, flagged and with its start', async () => {
+  const e = env(baseCfg({ remind_after_hours: 24 }));
+  await redFor(e, 25);
+  assert.deepEqual(types(e), ['problem:example-host:memory.ram', 'problem:example-host:memory.ram']);
+  const [first, again] = e.notifier.events;
+  assert.equal(first.reminder, undefined);
+  assert.equal(again.reminder, true);
+  assert.equal(again.since, first.first_seen);
+  assert.match(again.summary, /still a problem/);
+});
+
+test('reminder: none before the time, one per interval afterwards', async () => {
+  const e = env(baseCfg({ remind_after_hours: 24 }));
+  await redFor(e, 23);
+  assert.equal(e.notifier.events.length, 1);
+  await redFor(e, 48, 23 * HOUR + 5);
+  assert.equal(e.notifier.events.filter((x) => x.reminder).length, 2);
+});
+
+test('reminder: none after the recovery', async () => {
+  const e = env(baseCfg({ remind_after_hours: 24 }));
+  await redFor(e, 1);
+  for (let m = 65; m <= 26 * HOUR; m += 5) await poll(e, m + 1, { 'example-host': res(report({ runs: [ok(m)] })) });
+  assert.deepEqual(types(e), ['problem:example-host:memory.ram', 'recovery:example-host:memory.ram']);
+});
+
+test('reminder: 0 turns it off, the config accepts 0 but not a negative or fractional value', async () => {
+  const e = env(baseCfg({ remind_after_hours: 0 }));
+  await redFor(e, 30);
+  assert.equal(e.notifier.events.length, 1);
+  assert.equal(validateCollectConfig({ ...validRaw(), remind_after_hours: 0 }).remind_after_hours, 0);
+  assert.equal(validateCollectConfig(validRaw()).remind_after_hours, 24);
+  for (const v of [-1, 1.5, 'x']) assert.throws(() => validateCollectConfig({ ...validRaw(), remind_after_hours: v }), /remind_after_hours must be an integer ≥ 0/);
+});
+
+test('reminder: a state without the mark starts its clock at the first run, not at once', async () => {
+  const e = env(baseCfg({ remind_after_hours: 24 }));
+  await redFor(e, 1);
+  const st = await e.store.load();
+  for (const ent of Object.values(st.entities)) delete ent.reminded_at;
+  await e.store.save(st);
+  await poll(e, 3 * HOUR, { 'example-host': res(report({ runs: [bad(3 * HOUR - 1)] })) });
+  assert.equal(e.notifier.events.length, 1);
+  await poll(e, 28 * HOUR, { 'example-host': res(report({ runs: [bad(28 * HOUR - 1)] })) });
+  assert.equal(e.notifier.events.length, 2);
+});
+
+test('reminder: counts toward throttling and is not sent for an unstable entity', async () => {
+  const state = emptyState();
+  const cfg = baseCfg({ remind_after_hours: 1, max_notifications_per_hour: 1 });
+  processPoll(state, host, res(report({ runs: [bad(0), bad(5)] })), cfg, at(6));
+  const n = fakeNotifier();
+  await deliver(state, n, cfg, at(6));
+  await deliver(state, n, cfg, at(6 + 61));
+  assert.deepEqual(n.events.map((x) => x.type), ['problem', 'problem']);
+  const ent = Object.values(state.entities).find((x) => x.kind === 'check');
+  ent.unstable = true;
+  await deliver(state, n, cfg, at(6 + 200));
+  assert.equal(n.events.length, 2);
+});
+
+test('reminder: a problem suppressed by a dependency is reminded without suppressed_by', async () => {
+  const state = emptyState();
+  const cfg = baseCfg({ remind_after_hours: 1, hosts: [{ ...host, depends_on: { memory: ['uplink'] } }], dependencies: { uplink: { command: ['/x'], timeout_seconds: 1 } } });
+  processPoll(state, host, res(report({ runs: [bad(0), bad(5)] })), cfg, at(6));
+  const n = fakeNotifier();
+  const deps = { uplink: { query: async () => ({ affected: true, outage: { from: iso(-1), to: iso(3) }, reason: 'test' }) } };
+  await deliver(state, n, cfg, at(6), deps);
+  assert.deepEqual(n.events.map((x) => x.type), ['dependency_problem', 'problem']);
+  assert.equal(n.events[1].suppressed_by, 'uplink');
+  await deliver(state, n, cfg, at(6 + 61), deps);
+  const last = n.events.at(-1);
+  assert.equal(last.reminder, true);
+  assert.equal(last.suppressed_by, undefined);
+});

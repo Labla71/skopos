@@ -50,6 +50,7 @@ Example: [config/example-collect.json](../config/example-collect.json).
 | `host_confirm_polls` | polls, until "unreachable" or a report error is confirmed | 2 |
 | `flap_changes`, `flap_window_minutes` | this many confirmed changes in the window → "unstable" | 4, 60 |
 | `max_notifications_per_hour` | new problem notifications per hour, above that "throttled" | 5 |
+| `remind_after_hours` | a confirmed problem that stays red is reported again after this many hours without a report (`reminder`), `0` = off | 24 |
 | `initial_lookback_minutes` | first poll of a host: how far back, not 24 h | 30 |
 | `fetch_timeout_seconds` | time limit per poll | 60 |
 | `overrides` | per check module (`oom`), per instance (`sqlite-query/rpc_denied_new`) or exact key with sub-key: `confirm_runs`, `recover_runs`, `crit_confirm_runs`; the more specific one wins | — |
@@ -97,6 +98,12 @@ Entities, each per host:
   `problem` or `recovery`.
 - **Throttling:** more than `max_notifications_per_hour` `problem`/`unstable` events
   per hour go out as `throttled`, with the suppressed event in `suppressed`.
+- **Reminder:** the collector reports state changes only, so a problem whose ticket was closed
+  while the check stays red would never be heard of again. A confirmed problem that has not been
+  reported for `remind_after_hours` goes out once more as a `problem` event with `reminder: true`
+  and `since` (start of the problem), then again after the same time. A problem suppressed by a
+  dependency is reminded without `suppressed_by`. Reminders count toward throttling; an unstable
+  entity is not reminded. A state file from before this setting starts the clock at the first run.
 - **Retirement:** the latest run of a complete report with a fresh heartbeat is the catalog
   of what is configured on the host. An entity whose key has no row in it any more was
   removed from the configuration: a whole check, or a single item of a check with several
@@ -182,6 +189,8 @@ An event is a snapshot at the time of the change, not of delivery (`event_versio
   host or check. A `problem` or `recovery` attached to it carries `suppressed_by` (the
   dependency) and `dependency_outage`; one whose dependency could not be asked carries
   `dependency_unknown`.
+- A `problem` with `reminder: true` repeats a problem that is still confirmed; `since` is the start
+  of the problem (`first_seen`).
 - A `recovery` after a check was removed from the configuration carries `removed: true`.
 - Host findings carry the message in `last.message` and, depending on the code,
   `exit_code` or `report_version`.

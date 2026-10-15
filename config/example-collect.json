@@ -16,6 +16,7 @@
   "flap_changes": 4,
   "flap_window_minutes": 60,
   "max_notifications_per_hour": 5,
+  "remind_after_hours": 24,
   "overrides": {
     "systemd": { "crit_confirm_runs": 1 },
     "failed-units": { "crit_confirm_runs": 1 },

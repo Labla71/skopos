@@ -50,6 +50,7 @@ JSON, streng geprüft wie die Mess-Config (`lib/collect/config.js`). Beispiel:
 | `host_confirm_polls` | Abholungen, bis „nicht erreichbar“ oder ein Report-Fehler bestätigt ist | 2 |
 | `flap_changes`, `flap_window_minutes` | so viele bestätigte Wechsel im Fenster → „instabil“ | 4, 60 |
 | `max_notifications_per_hour` | neue Problem-Meldungen je Stunde, darüber „throttled“ | 5 |
+| `remind_after_hours` | ein bestätigtes Problem, das rot bleibt, wird nach so vielen Stunden ohne Meldung erneut gemeldet (`reminder`), `0` = aus | 24 |
 | `initial_lookback_minutes` | erste Abholung eines Hosts: so weit zurück, nicht 24 h | 30 |
 | `fetch_timeout_seconds` | Zeitgrenze je Abholung | 60 |
 | `overrides` | je Check-Modul (`oom`), je Instanz (`sqlite-query/rpc_denied_new`) oder exakter Schlüssel mit Teilschlüssel: `confirm_runs`, `recover_runs`, `crit_confirm_runs`; das Genauere gewinnt | — |
@@ -96,6 +97,13 @@ Entitäten, jeweils je Host:
   Wechseln ist. Dann folgen `calm` und der Endstand als normales `problem` oder `recovery`.
 - **Drosselung:** Mehr als `max_notifications_per_hour` Ereignisse `problem`/`unstable` je
   Stunde gehen als `throttled` hinaus, mit dem unterdrückten Ereignis in `suppressed`.
+- **Erinnerung:** Der Sammler meldet nur Zustandswechsel; ein Problem, dessen Ticket
+  geschlossen wurde, während der Check rot bleibt, würde nie wieder gemeldet. Ein bestätigtes
+  Problem, das `remind_after_hours` lang nicht gemeldet wurde, geht noch einmal als Ereignis
+  `problem` mit `reminder: true` und `since` (Beginn des Problems) hinaus, danach erneut nach
+  derselben Zeit. Ein durch eine Abhängigkeit unterdrücktes Problem wird ohne `suppressed_by`
+  erinnert. Erinnerungen zählen zur Drosselung; eine instabile Entität wird nicht erinnert. Ein
+  Zustand aus der Zeit vor dieser Einstellung startet die Uhr beim ersten Lauf.
 - **Ausmusterung:** Der letzte Lauf eines vollständigen Reports mit frischem Heartbeat ist
   der Katalog dessen, was auf dem Host konfiguriert ist. Eine Entität, deren Schlüssel dort
   keine Zeile mehr hat, wurde aus der Konfiguration entfernt: ein ganzer Check oder ein
@@ -186,6 +194,8 @@ Ein Ereignis ist ein Schnappschuss zum Zeitpunkt des Wechsels, nicht der Zustell
   Host und keinen Check. Ein zugeordnetes `problem` oder `recovery` trägt `suppressed_by` (die
   Abhängigkeit) und `dependency_outage`; eines, dessen Abhängigkeit nicht gefragt werden
   konnte, trägt `dependency_unknown`.
+- Ein `problem` mit `reminder: true` wiederholt ein weiterhin bestätigtes Problem; `since` ist
+  der Beginn des Problems (`first_seen`).
 - Ein `recovery` nach Entfernen eines Checks aus der Konfiguration trägt `removed: true`.
 - Host-Befunde tragen in `last.message` die Meldung und je nach Code `exit_code` oder
   `report_version`.

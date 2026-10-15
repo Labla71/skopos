@@ -227,3 +227,21 @@ Ausgangslage der Messungen: Node 22.23, kleinste Zielmaschine mit 2 Kernen, 1,9 
   hinaus. Das Ereignisformat bleibt bei `event_version` 1 und bekommt den Typ
   `dependency_problem` sowie die Felder `suppressed_by`, `dependency_outage`,
   `dependency_unknown`; ein Notifier muss sie kennen, bevor eine Abhängigkeit konfiguriert wird.
+
+## 16. Erinnerung an Probleme, die rot bleiben
+
+- **Kontext:** Der Sammler meldet nur bestätigte Zustandswechsel. Ein Problem, das nach dem
+  Schließen seines Tickets rot bleibt, wird nie wieder gemeldet; das fing nur eine tägliche
+  KI-Auswertung neben dem Sammler ab, die überwiegend Fehlalarme und Doppelmeldungen dessen
+  erzeugte, was der Sammler schon geschickt hatte.
+- **Entscheidung:** Ein bestätigtes Problem, das `remind_after_hours` lang nicht gemeldet
+  wurde (Vorgabe 24, `0` = aus), geht erneut als Ereignis `problem` mit `reminder: true` und
+  `since` hinaus. Die Uhr ist die letzte zugestellte Problem-Meldung der Entität; es ist kein
+  neuer Zustand und berührt weder Erholung noch Flattern.
+- **Begründung:** Der Notifier macht aus einem wiederholten Problem ohnehin eine Notiz am
+  offenen Ticket oder ein neues Ticket nach dem Schließen, der Sammler braucht also kein
+  Wissen über Tickets. Weniger Auswerter heißt weniger Stellen, an denen derselbe Befund
+  doppelt beurteilt wird.
+- **Folgen:** Ein dauerhaft roter Check meldet einmal je Intervall. Erinnerungen zählen zur
+  Drosselung. Das Ereignisformat bleibt bei `event_version` 1 und bekommt bei `problem` die
+  Felder `reminder` und `since`.
