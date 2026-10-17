@@ -24,6 +24,7 @@ function makeRepo(version = '1.2.3') {
   git(dir, 'config', 'user.email', 'test@example.com');
   git(dir, 'add', '.');
   git(dir, 'commit', '-q', '-m', 'init');
+  git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD'); // stands in for a tracked remote branch
   return dir;
 }
 

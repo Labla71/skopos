@@ -5,7 +5,7 @@
 #   bin/release.sh [--dry-run] [--notes <file>]
 #
 # The version comes from package.json; the tag is v<version>. Preconditions (checked before
-# anything is changed): clean working tree, branch main, tag does not exist yet, tests pass.
+# anything is changed): clean working tree, a branch that tracks origin, tag does not exist yet, tests pass.
 # --dry-run builds and verifies the archive in a temporary directory and stops there.
 # Authentication: set GH_TOKEN to the token of the publishing account (gh must be installed).
 set -euo pipefail
@@ -34,7 +34,8 @@ tag="v$version"
 asset="$tag.tar.gz"
 
 [ -z "$(git status --porcelain)" ] || die "working tree is not clean"
-[ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] || die "not on branch main"
+branch="$(git rev-parse --abbrev-ref HEAD)"
+git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null || die "branch $branch does not track origin"
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then die "tag $tag already exists"; fi
 
 npm test >/dev/null 2>&1 || die "tests fail (run npm test)"
@@ -58,7 +59,7 @@ remote="$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##
 [ -n "$remote" ] || die "cannot derive owner/name from remote origin"
 
 git tag -a "$tag" -m "Skopos $version"
-git -c credential.helper= -c credential.helper='!gh auth git-credential' push origin main "$tag"
+git -c credential.helper= -c credential.helper='!gh auth git-credential' push origin "$branch" "$tag"
 
 args=(release create "$tag" "$tmp/$asset" --repo "$remote" --title "Skopos $version")
 if [ -n "$notes" ]; then args+=(--notes-file "$notes"); else args+=(--generate-notes); fi
