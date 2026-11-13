@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -152,7 +152,7 @@ test('aborts without node, writes nothing', () => {
   for (const dir of ['/usr/bin', '/bin']) {
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir)) {
-      if (name === 'node' || existsSync(join(bin, name))) continue;
+      if (name === 'node' || lstatSync(join(bin, name), { throwIfNoEntry: false })) continue;
       symlinkSync(join(dir, name), join(bin, name));
     }
   }
