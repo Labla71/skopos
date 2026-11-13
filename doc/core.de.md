@@ -72,7 +72,7 @@ export default {
   müssen asynchron arbeiten: Ein synchroner Dauerlauf lässt sich nicht unterbrechen.
 
 Vorhanden: `uptime` (Parameter `warn_below_seconds`, optional) sowie die System-Checks `boot`, `memory`,
-`load`, `disk`, `oom`, `journal`, `failed-units`, `systemd` und `mount` sowie die fachlichen Checks `sqlite-query` und
+`load`, `disk`, `oom`, `journal`, `failed-units`, `user-unit-failures`, `systemd` und `mount` sowie die fachlichen Checks `sqlite-query` und
 `json-file`, beschrieben in [checks.de.md](checks.de.md).
 
 ## Speicher

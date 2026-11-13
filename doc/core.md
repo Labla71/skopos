@@ -73,8 +73,8 @@ export default {
   interrupted.
 
 Available: `uptime` (parameter `warn_below_seconds`, optional) as well as the system
-checks `boot`, `memory`, `load`, `disk`, `oom`, `journal`, `failed-units`, `systemd` and
-`mount`, plus the business checks `sqlite-query` and `json-file`, described in
+checks `boot`, `memory`, `load`, `disk`, `oom`, `journal`, `failed-units`, `user-unit-failures`, `systemd`
+and `mount`, plus the business checks `sqlite-query` and `json-file`, described in
 [checks.md](checks.md).
 
 ## Storage

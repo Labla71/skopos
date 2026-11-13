@@ -57,7 +57,7 @@ Example: [config/example-collect.json](../config/example-collect.json).
 | `dependencies` | named dependencies outside the hosts, each `{ command: [<absolute path>, …], timeout_seconds? }`, see [Dependencies](#dependencies-outside-the-hosts) | `timeout_seconds` 30 |
 
 **Event counters need `confirm_runs: 1`.** Checks that report an occurrence in only one
-run (`oom`, `journal`, `boot`, `sqlite-query` with `delta`) would never be confirmed with
+run (`oom`, `journal`, `user-unit-failures`, `boot`, `sqlite-query` with `delta`) would never be confirmed with
 the default of 2: the next run resets the counter to 0. The recovery (`recover_runs`) is
 unaffected, so the ticket gets marked resolved again shortly after the event.
 

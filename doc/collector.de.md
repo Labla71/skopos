@@ -57,7 +57,7 @@ JSON, streng geprüft wie die Mess-Config (`lib/collect/config.js`). Beispiel:
 | `dependencies` | benannte Abhängigkeiten außerhalb der Hosts, je `{ command: [<absoluter Pfad>, …], timeout_seconds? }`, siehe [Abhängigkeiten](#abhängigkeiten-außerhalb-der-hosts) | `timeout_seconds` 30 |
 
 **Ereignis-Zähler brauchen `confirm_runs: 1`.** Checks, die ein Vorkommen nur in einem Lauf
-melden (`oom`, `journal`, `boot`, `sqlite-query` mit `delta`), wären mit der Vorgabe 2 nie bestätigt: Im
+melden (`oom`, `journal`, `user-unit-failures`, `boot`, `sqlite-query` mit `delta`), wären mit der Vorgabe 2 nie bestätigt: Im
 nächsten Lauf steht der Zähler wieder auf 0. Die Erholung (`recover_runs`) bleibt davon unberührt,
 das Ticket wird also kurz nach dem Ereignis wieder als erledigt markiert.
 

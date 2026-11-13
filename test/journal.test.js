@@ -169,3 +169,82 @@ test('failed-units: long lists are shortened; parseFailed ignores noise', async 
   assert.deepEqual(parseFailed('\n  \n● x.service loaded failed\n'), ['x.service']);
   assert.ok(CHECKS['failed-units'].validate({ ignore: ['a b'] }).length);
 });
+
+// --- user-unit-failures ---------------------------------------------------------------------
+import { createUserUnitFailuresCheck, parseFailures } from '../lib/checks/user-unit-failures.js';
+
+const failure = (cursor, unit) => JSON.stringify({ __CURSOR: cursor, ...(unit ? { USER_UNIT: unit } : {}) });
+
+test('user-unit-failures: counts failures per unit, names them, stores the cursor, asks for the right entries', async () => {
+  let args;
+  const c = createUserUnitFailuresCheck({ journal: async (a) => { args = a; return ok(out(
+    failure('c1', 'a.service'), failure('c2', 'b.service'), failure('c3', 'a.service'))); } });
+  const { data, ctx } = stateOf();
+  const [r] = await c.measure({ uid: 1000 }, ctx);
+  assert.deepEqual([r.key, r.value, r.unit, r.status], ['failures', 3, 'failures', 'warn']);
+  assert.match(r.reason, /3 unit failures in the last 24 hours: a\.service ×2, b\.service/);
+  assert.equal(data.cursor, 'c3');
+  assert.ok(args.includes('MESSAGE_ID=d9b373ed55a64feb8242e02dbe79a49c'));
+  const uid = 1000;
+  assert.ok(args.includes(`_SYSTEMD_UNIT=user@${uid}.service`));
+  assert.deepEqual(args.slice(args.indexOf('--since')), ['--since', '24 hours ago']);
+});
+
+test('user-unit-failures: later run uses the cursor; nothing new is a measured 0', async () => {
+  let args;
+  const { data, ctx } = stateOf({ cursor: 'c3' });
+  const [r] = await createUserUnitFailuresCheck({ journal: async (a) => { args = a; return ok(''); } }).measure({ uid: 1000 }, ctx);
+  assert.deepEqual([r.value, r.status, r.reason], [0, 'ok', undefined]);
+  assert.equal(data.cursor, 'c3');
+  assert.deepEqual(args.slice(args.indexOf('--after-cursor')), ['--after-cursor', 'c3']);
+});
+
+test('user-unit-failures: units restrict the count, the cursor still covers every entry; severity applies', async () => {
+  const c = createUserUnitFailuresCheck({ journal: async () => ok(out(failure('c1', 'other.service'), failure('c2', 'a.service'), failure('c3', 'other.service'))) });
+  const { data, ctx } = stateOf();
+  const [r] = await c.measure({ uid: 1000, units: ['a.service'], severity: 'crit' }, ctx);
+  assert.deepEqual([r.value, r.status], [1, 'crit']);
+  assert.match(r.reason, /1 unit failure in .*: a\.service$/);
+  assert.equal(data.cursor, 'c3');
+  const [none] = await createUserUnitFailuresCheck({ journal: async () => ok(out(failure('c9', 'other.service'))) }).measure({ uid: 1000, units: ['a.service'] }, stateOf().ctx);
+  assert.deepEqual([none.value, none.status], [0, 'ok']);
+});
+
+test('user-unit-failures: an entry without USER_UNIT still counts (without a units filter)', () => {
+  const p = parseFailures(out(failure('c1')));
+  assert.equal(p.total, 1);
+  assert.deepEqual([...p.counts.keys()], ['(unknown unit)']);
+});
+
+test('user-unit-failures: unreadable journal and bad output are unknown, the cursor stays', async () => {
+  const { data, ctx } = stateOf({ cursor: 'c3' });
+  const [a] = await createUserUnitFailuresCheck({ journal: async () => ok('', { code: 1, stderr: 'boom' }) }).measure({ uid: 1000 }, ctx);
+  assert.equal(a.status, 'unknown');
+  const [b] = await createUserUnitFailuresCheck({ journal: async () => ok('', { stderr: 'Hint: You are currently not seeing messages from other users and the system.' }) }).measure({ uid: 1000 }, ctx);
+  assert.equal(b.status, 'unknown');
+  assert.match(b.reason, /systemd-journal/);
+  const [c] = await createUserUnitFailuresCheck({ journal: async () => ok('not json\n') }).measure({ uid: 1000 }, ctx);
+  assert.equal(c.status, 'unknown');
+  assert.equal(data.cursor, 'c3');
+});
+
+test('user-unit-failures: a rejected cursor falls back to 24 hours once and says so', async () => {
+  const calls = [];
+  const journal = async (a) => { calls.push(a); return calls.length === 1 ? ok('', { code: 1, stderr: 'Failed to seek to cursor' }) : ok(out(failure('n1', 'a.service'))); };
+  const { data, ctx } = stateOf({ cursor: 'old' });
+  const [r] = await createUserUnitFailuresCheck({ journal }).measure({ uid: 1000 }, ctx);
+  assert.equal(r.value, 1);
+  assert.match(r.reason, /cursor was rejected/);
+  assert.equal(data.cursor, 'n1');
+});
+
+test('user-unit-failures: configuration validation', () => {
+  const v = (params) => validateConfig({ checks: [{ check: 'user-unit-failures', key: 'u', ...params }] }, CHECKS);
+  const errs = (params) => { try { v(params); return []; } catch (e) { return [e.message]; } };
+  assert.deepEqual(errs({ uid: 1000, units: ['a.service'], severity: 'crit' }), []);
+  assert.match(errs({})[0], /uid/);
+  assert.match(errs({ uid: 0 })[0], /uid/);
+  assert.match(errs({ uid: 1000, units: [] })[0], /units/);
+  assert.match(errs({ uid: 1000, severity: 'x' })[0], /severity/);
+  assert.match(errs({ uid: 1000, bogus: 1 })[0], /bogus/);
+});

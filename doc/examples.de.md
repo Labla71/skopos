@@ -138,6 +138,24 @@ bekommt der Sammler den Report nicht und meldet stattdessen den Host als nicht e
 Der Befund dieses Checks kommt mit der Historie an, sobald SSH wieder läuft. Auf dem
 Sammler-Host selbst, der lokal gelesen wird, kommt er sofort an.
 
+## Fehlgeschlagene Timer-Jobs eines normalen Benutzerkontos
+
+```json
+{
+  "check": "user-unit-failures",
+  "key": "user_timers",
+  "uid": 1000,
+  "units": ["example-report.service", "example-backup.service"],
+  "severity": "crit"
+}
+```
+
+Timer-Jobs unter `~/.config/systemd/user` sieht `failed-units` nicht (Skopos läuft als eigener
+Benutzer und erreicht den Bus des Kontos nicht). `user-unit-failures` liest im Journal die
+Fehlschlag-Meldung des Benutzer-Managers von `uid` und zählt die Fehlschläge der aufgeführten Units
+seit dem letzten Lauf; ohne `units` zählt jede Unit dieses Kontos. Ereignisbasiert: ein Befund im
+Lauf nach dem Fehlschlag. Details: [checks.de.md](checks.de.md#user-unit-failures).
+
 ## Fehlermeldungen im Journal
 
 ```json

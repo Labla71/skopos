@@ -138,6 +138,24 @@ cannot fetch the report and reports the host as unreachable instead. This check'
 finding arrives with the history once SSH works again. On the collector host itself, which
 is read locally, it arrives right away.
 
+## Failed timer jobs of a normal account
+
+```json
+{
+  "check": "user-unit-failures",
+  "key": "user_timers",
+  "uid": 1000,
+  "units": ["example-report.service", "example-backup.service"],
+  "severity": "crit"
+}
+```
+
+Timer jobs under `~/.config/systemd/user` are invisible to `failed-units` (Skopos runs as
+its own user and cannot reach the account's bus). `user-unit-failures` reads the journal for
+the failure message of the user manager of `uid` and counts the failures of the listed units
+since the last run; without `units`, every unit of that account counts. Event based: one
+finding in the run after the failure. Details: [checks.md](checks.md#user-unit-failures).
+
 ## Errors in the journal
 
 ```json

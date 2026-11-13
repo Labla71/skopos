@@ -19,6 +19,7 @@ they never read anything live.
 | `oom` | `kills` | OOM kills since the last run |
 | `journal` | `errors` | journal entries at or above priority `err` since the last run |
 | `failed-units` | `failed` | number of failed systemd units |
+| `user-unit-failures` | `failures` | failures of units in a user's systemd manager since the last run |
 | `systemd` | per unit (`a.service` → `a_service`) | state (`active` …) |
 | `mount` | per path | read duration in ms, else `not mounted` / `no response` / `unreadable` |
 | `sqlite-query` | — (value under `<instance>`) | a number from a SQL query, or its increase (`delta`) |
@@ -150,6 +151,30 @@ failed timer job shows up here; a plainly stopped unit does not — that is what
 
 Parameters (optional): `ignore` (unit names known to be allowed to fail), `severity`
 (`warn` — default — or `crit`). The `reason` names up to five units.
+
+## user-unit-failures
+
+Failed units in the systemd manager of a normal account (typically timer jobs under
+`~/.config/systemd/user`). Skopos runs as its own system user and cannot reach another
+user's bus, so `failed-units` and `systemd` do not see these units. The check reads the
+journal instead: when a unit fails, systemd logs the catalogued message `UNIT_FAILURE_RESULT`
+(`MESSAGE_ID=d9b373ed55a64feb8242e02dbe79a49c`) from `user@<uid>.service`, naming the
+unit in `USER_UNIT`. Like `journal`, it needs the group `systemd-journal`, and the
+account's journal must be readable by that group (the default for persistent journals).
+
+The journal cursor of the most recent entry is the watermark (`ctx.state`); the first run
+without a cursor looks back 24 hours. No entry is a measured `0`. The value counts failures
+since the last run; the reason names up to five units (`a.service ×3`). It is event based:
+a unit that stays failed is reported once, in the run after it failed, not on every run —
+like the other event counters it needs `confirm_runs: 1` in the collector (see
+[collector.md](collector.md)); `remind_after_hours` keeps a problem that stays red in view. An unreadable journal (missing group, `journalctl` missing,
+timeout, no JSON output): `unknown`, cursor unchanged. A rejected cursor: once 24 hours
+back, the reason names the fallback. Output is capped at 4 MB; if reached, the value is a
+lower bound and the rest is read in the next run.
+
+Parameters: `uid` (required, integer ≥ 1, the account whose manager is observed), `units`
+(optional list of unit names; without it, every unit of that manager counts), `severity`
+(`warn` — default — or `crit`).
 
 ## systemd
 

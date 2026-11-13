@@ -20,6 +20,7 @@ nichts live.
 | `oom` | `kills` | OOM-Kills seit dem letzten Lauf |
 | `journal` | `errors` | Journal-Einträge ab Priorität `err` seit dem letzten Lauf |
 | `failed-units` | `failed` | Anzahl fehlgeschlagener systemd-Units |
+| `user-unit-failures` | `failures` | Fehlschläge von Units im systemd-Manager eines Benutzers seit dem letzten Lauf |
 | `systemd` | je Unit (`a.service` → `a_service`) | Zustand (`active` …) |
 | `mount` | je Pfad | Lesedauer in ms, sonst `not mounted` / `no response` / `unreadable` |
 | `sqlite-query` | — (Wert unter `<instanz>`) | eine Zahl aus einer SQL-Abfrage, oder ihr Zuwachs (`delta`) |
@@ -149,6 +150,32 @@ fehlgeschlagener Timer-Job erscheint hier; eine schlicht gestoppte Unit nicht �
 
 Parameter (optional): `ignore` (Unit-Namen, die bekanntermaßen fehlschlagen dürfen), `severity`
 (`warn` — Vorgabe — oder `crit`). Der `reason` nennt bis zu fünf Units.
+
+## user-unit-failures
+
+Fehlgeschlagene Units im systemd-Manager eines normalen Benutzerkontos (typisch Timer-Jobs
+unter `~/.config/systemd/user`). Skopos läuft als eigener Systembenutzer und erreicht den Bus
+eines anderen Benutzers nicht, deshalb sehen `failed-units` und `systemd` diese Units nicht.
+Der Check liest stattdessen das Journal: Schlägt eine Unit fehl, schreibt systemd die
+katalogisierte Meldung `UNIT_FAILURE_RESULT` (`MESSAGE_ID=d9b373ed55a64feb8242e02dbe79a49c`) aus
+`user@<uid>.service` und nennt die Unit in `USER_UNIT`. Wie `journal` braucht er die Gruppe
+`systemd-journal`, und das Journal des Kontos muss für diese Gruppe lesbar sein (Vorgabe bei
+persistentem Journal).
+
+Der Journal-Cursor des jüngsten Eintrags ist die Wassermarke (`ctx.state`); der erste Lauf ohne
+Cursor schaut 24 Stunden zurück. Kein Eintrag ist eine gemessene `0`. Der Wert zählt die
+Fehlschläge seit dem letzten Lauf; der Grund nennt bis zu fünf Units (`a.service ×3`). Der Check
+ist ereignisbasiert: Eine Unit, die fehlgeschlagen bleibt, wird einmal gemeldet, im Lauf nach dem
+Fehlschlag, nicht bei jedem Lauf — wie die anderen Ereignis-Zähler braucht er im Sammler `confirm_runs: 1` (siehe
+[collector.de.md](collector.de.md)); `remind_after_hours` hält ein Problem im Blick, das rot bleibt. Journal nicht
+lesbar (Gruppe fehlt, `journalctl` fehlt, Timeout, keine JSON-Ausgabe): `unknown`, Cursor
+unverändert. Abgelehnter Cursor: einmal 24 Stunden zurück, der Grund nennt den Rückfall. Die
+Ausgabe ist auf 4 MB begrenzt; wird das erreicht, ist der Wert eine Untergrenze und der Rest
+kommt im nächsten Lauf.
+
+Parameter: `uid` (Pflicht, Ganzzahl ≥ 1, das Konto, dessen Manager beobachtet wird), `units`
+(optionale Liste von Unit-Namen; ohne sie zählt jede Unit dieses Managers), `severity` (`warn` —
+Vorgabe — oder `crit`).
 
 ## systemd
 
