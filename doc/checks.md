@@ -308,7 +308,15 @@ Reads a local JSON file (at most 1 MiB) and evaluates a field and the file age. 
 Parameters: `file` (required, absolute path), `field` (dot path, e.g. `result.status`
 or `items.0.count`; own properties only), `expected` (string, number or boolean;
 deviation yields `severity`, default `crit`), alternatively the numeric thresholds as
-with `sqlite-query`, `unit`, `warn_age_seconds`, `crit_age_seconds`.
+with `sqlite-query`, `unit`, `warn_age_seconds`, `crit_age_seconds`, and the pair `event_field` + `event_max_age_seconds`
+(only together, only with `field`).
+
+`event_field` is for a field that counts over a **sliding window** (e.g. "errors in the last
+24 h") while the file also names the epoch-millisecond time of the latest event. Once that event
+is older than `event_max_age_seconds`, a warn/crit rating of the value drops to `ok` with the
+reason `latest event … ago`: the problem is over, only the window still remembers it. The
+value is stored unchanged. A missing or non-numeric event time never hides anything; the
+rating stays as the thresholds gave it.
 
 Field values are strings, numbers or booleans (stored as text `true`/`false`);
 `expected` compares strictly, without conversion (`5` is not `"5"`). Missing file,

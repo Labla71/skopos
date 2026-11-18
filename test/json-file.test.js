@@ -144,6 +144,22 @@ test('age: a modification time in the future is unknown beyond a small tolerance
   assert.match(r.value.reason, /larger than/);
 });
 
+test('event window: a bad rating drops to ok once the latest event is older than the window', async () => {
+  const mk = (ago) => makeFile({ blocks: 7, lastAtMs: NOW - ago * 1000 });
+  const p = { field: 'blocks', warn_above: 1, crit_above: 3, event_field: 'lastAtMs', event_max_age_seconds: 7200 };
+  let r = await run({ ...p, file: mk(3600) });
+  assert.equal(r.value.status, 'crit', 'event inside the window: rating stays');
+  r = await run({ ...p, file: mk(7201) });
+  assert.equal(r.value.status, 'ok');
+  assert.equal(r.value.value, 7, 'the value itself is still stored');
+  assert.match(r.value.reason, /older than 7200 s/);
+  // no usable event time: nothing is hidden
+  assert.equal((await run({ ...p, file: makeFile({ blocks: 7 }) })).value.status, 'crit');
+  assert.equal((await run({ ...p, file: makeFile({ blocks: 7, lastAtMs: 'x' }) })).value.status, 'crit');
+  // without the window the old behaviour is unchanged
+  assert.equal((await run({ file: mk(99999), field: 'blocks', warn_above: 1 })).value.status, 'warn');
+});
+
 test('config: registered, parameters validated', () => {
   assert.equal(CHECKS['json-file'], defaultCheck);
   const base = { key: 'j', check: 'json-file', file: '/data/x.json' };
@@ -158,5 +174,9 @@ test('config: registered, parameters validated', () => {
   bad({ warn_age_seconds: 9, crit_age_seconds: 1 }, /warn_age_seconds must not exceed/);
   bad({ warn_age_seconds: -1 }, /warn_age_seconds must be a number ≥ 0/);
   bad({ field: 'a', warn_above: 9, crit_above: 1 }, /warn_above must not exceed/);
+  bad({ field: 'a', event_field: 't' }, /belong together/);
+  bad({ field: 'a', event_max_age_seconds: 60 }, /belong together/);
+  bad({ event_field: 't', event_max_age_seconds: 60 }, /event_field needs a field/);
+  bad({ field: 'a', event_field: 't', event_max_age_seconds: 0 }, /must be a number > 0/);
   bad({ field: 'a', fild: 'x' }, /unknown key "fild"/);
 });

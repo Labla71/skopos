@@ -303,7 +303,15 @@ Schlüssel: `value` (das Feld, nur mit `field`) und `age` (Sekunden seit der `mt
 Parameter: `file` (Pflicht, absoluter Pfad), `field` (Punktpfad, z. B. `result.status` oder
 `items.0.count`; nur eigene Eigenschaften), `expected` (Zeichenkette, Zahl oder Boolean; Abweichung
 ergibt `severity`, Vorgabe `crit`), alternativ die numerischen Schwellen wie bei `sqlite-query`,
-`unit`, `warn_age_seconds`, `crit_age_seconds`.
+`unit`, `warn_age_seconds`, `crit_age_seconds` sowie das Paar `event_field` +
+`event_max_age_seconds` (nur zusammen, nur mit `field`).
+
+`event_field` ist für ein Feld, das über ein **gleitendes Fenster** zählt (z. B. „Fehler der letzten
+24 h“), während die Datei auch den Zeitpunkt des letzten Ereignisses in Epoch-Millisekunden nennt.
+Ist dieses Ereignis älter als `event_max_age_seconds`, fällt eine Warn-/Crit-Bewertung des Werts
+auf `ok` mit dem Grund `latest event … ago`: das Problem ist vorbei, nur das Fenster erinnert sich
+noch. Der Wert wird unverändert gespeichert. Eine fehlende oder nicht numerische Ereigniszeit
+verdeckt nie etwas; die Bewertung bleibt, wie die Schwellen sie ergaben.
 
 Feldwerte sind Zeichenketten, Zahlen oder Booleans (als Text `true`/`false` gespeichert);
 `expected` vergleicht strikt, ohne Umwandlung (`5` ist nicht `"5"`). Fehlende Datei,
